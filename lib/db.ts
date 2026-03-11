@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { getSingaporeNow } from '@/lib/timezone';
 
 export type Priority = 'high' | 'medium' | 'low';
+export type RecurrencePattern = 'daily' | 'weekly' | 'monthly' | 'yearly';
 
 export interface User {
   id: number;
@@ -16,6 +17,8 @@ export interface Todo {
   title: string;
   priority: Priority;
   due_date: string | null;
+  recurrence_enabled: number;
+  recurrence_pattern: RecurrencePattern | null;
   completed: number;
   completed_at: string | null;
   created_at: string;
@@ -40,6 +43,8 @@ db.exec(`
     title TEXT NOT NULL,
     priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high', 'medium', 'low')),
     due_date TEXT,
+    recurrence_enabled INTEGER NOT NULL DEFAULT 0 CHECK (recurrence_enabled IN (0, 1)),
+    recurrence_pattern TEXT CHECK (recurrence_pattern IN ('daily', 'weekly', 'monthly', 'yearly') OR recurrence_pattern IS NULL),
     completed INTEGER NOT NULL DEFAULT 0,
     completed_at TEXT,
     created_at TEXT NOT NULL,
@@ -51,6 +56,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
 `);
 
+// Backfill recurrence columns for older databases created before recurrence support.
+try {
+  db.exec("ALTER TABLE todos ADD COLUMN recurrence_enabled INTEGER NOT NULL DEFAULT 0 CHECK (recurrence_enabled IN (0, 1))");
+} catch {
+  // Column already exists.
+}
+
+try {
+  db.exec("ALTER TABLE todos ADD COLUMN recurrence_pattern TEXT CHECK (recurrence_pattern IN ('daily', 'weekly', 'monthly', 'yearly') OR recurrence_pattern IS NULL)");
+} catch {
+  // Column already exists.
+}
+
 const userSelectByUsername = db.prepare('SELECT id, username, created_at FROM users WHERE username = ?');
 const userInsert = db.prepare('INSERT INTO users (username) VALUES (?)');
 const userSelectById = db.prepare('SELECT id, username, created_at FROM users WHERE id = ?');
@@ -58,7 +76,7 @@ const userSelectById = db.prepare('SELECT id, username, created_at FROM users WH
 const todoPriorityOrder = "CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END";
 
 const todoSelectAllByUser = db.prepare(`
-  SELECT id, user_id, title, priority, due_date, completed, completed_at, created_at, updated_at
+  SELECT id, user_id, title, priority, due_date, recurrence_enabled, recurrence_pattern, completed, completed_at, created_at, updated_at
   FROM todos
   WHERE user_id = ?
   ORDER BY completed ASC, ${todoPriorityOrder},
@@ -68,19 +86,19 @@ const todoSelectAllByUser = db.prepare(`
 `);
 
 const todoSelectByIdAndUser = db.prepare(`
-  SELECT id, user_id, title, priority, due_date, completed, completed_at, created_at, updated_at
+  SELECT id, user_id, title, priority, due_date, recurrence_enabled, recurrence_pattern, completed, completed_at, created_at, updated_at
   FROM todos
   WHERE id = ? AND user_id = ?
 `);
 
 const todoInsert = db.prepare(`
-  INSERT INTO todos (user_id, title, priority, due_date, completed, completed_at, created_at, updated_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO todos (user_id, title, priority, due_date, recurrence_enabled, recurrence_pattern, completed, completed_at, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const todoUpdate = db.prepare(`
   UPDATE todos
-  SET title = ?, priority = ?, due_date = ?, completed = ?, completed_at = ?, updated_at = ?
+  SET title = ?, priority = ?, due_date = ?, recurrence_enabled = ?, recurrence_pattern = ?, completed = ?, completed_at = ?, updated_at = ?
   WHERE id = ? AND user_id = ?
 `);
 
@@ -122,6 +140,8 @@ export const todoDB = {
     title: string;
     priority: Priority;
     dueDate: string | null;
+    recurrenceEnabled: boolean;
+    recurrencePattern: RecurrencePattern | null;
   }): Todo {
     const nowIso = getSingaporeNow().toISOString();
     const info = todoInsert.run(
@@ -129,6 +149,8 @@ export const todoDB = {
       input.title,
       input.priority,
       input.dueDate,
+      input.recurrenceEnabled ? 1 : 0,
+      input.recurrenceEnabled ? input.recurrencePattern : null,
       0,
       null,
       nowIso,
@@ -147,6 +169,8 @@ export const todoDB = {
     title: string;
     priority: Priority;
     dueDate: string | null;
+    recurrenceEnabled: boolean;
+    recurrencePattern: RecurrencePattern | null;
     completed: boolean;
     completedAt: string | null;
   }): Todo | null {
@@ -155,6 +179,8 @@ export const todoDB = {
       input.title,
       input.priority,
       input.dueDate,
+      input.recurrenceEnabled ? 1 : 0,
+      input.recurrenceEnabled ? input.recurrencePattern : null,
       input.completed ? 1 : 0,
       input.completedAt,
       updatedAt,
