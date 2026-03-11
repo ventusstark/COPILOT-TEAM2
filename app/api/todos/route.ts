@@ -1,23 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
-import { type Priority, type RecurrencePattern, todoDB } from '@/lib/db';
+import { type Priority, todoDB } from '@/lib/db';
 import { getSingaporeNow } from '@/lib/timezone';
 
 const createTodoSchema = z.object({
   title: z.string().trim().min(1, 'Title is required').max(500),
   priority: z.enum(['high', 'medium', 'low']).default('medium'),
   due_date: z.string().datetime().optional().nullable(),
-  recurrence_enabled: z.boolean().optional().default(false),
-  recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional().nullable(),
-}).superRefine((data, ctx) => {
-  if (data.recurrence_enabled && !data.due_date) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Recurring todos require a due date',
-      path: ['due_date'],
-    });
-  }
 });
 
 function ensureFutureDueDate(dueDate: string | null | undefined): string | null {
@@ -61,18 +51,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: parsed.error.issues[0]?.message ?? 'Invalid request' }, { status: 400 });
     }
 
-    const recurrenceEnabled = parsed.data.recurrence_enabled ?? false;
-    const recurrencePattern: RecurrencePattern | null = recurrenceEnabled
-      ? (parsed.data.recurrence_pattern ?? 'daily') as RecurrencePattern
-      : null;
-
     const todo = todoDB.create({
       userId: session.userId,
       title: parsed.data.title,
       priority: parsed.data.priority as Priority,
       dueDate: ensureFutureDueDate(parsed.data.due_date),
-      recurrenceEnabled,
-      recurrencePattern,
     });
 
     return NextResponse.json({ success: true, data: todo }, { status: 201 });
