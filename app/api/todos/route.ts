@@ -1,0 +1,67 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { getSession } from '@/lib/auth';
+import { type Priority, todoDB } from '@/lib/db';
+import { getSingaporeNow } from '@/lib/timezone';
+
+const createTodoSchema = z.object({
+  title: z.string().trim().min(1, 'Title is required').max(500),
+  priority: z.enum(['high', 'medium', 'low']).default('medium'),
+  due_date: z.string().datetime().optional().nullable(),
+});
+
+function ensureFutureDueDate(dueDate: string | null | undefined): string | null {
+  if (!dueDate) {
+    return null;
+  }
+
+  const due = new Date(dueDate);
+  if (Number.isNaN(due.getTime())) {
+    throw new Error('Due date is invalid');
+  }
+
+  const minAllowed = new Date(getSingaporeNow().getTime() + 60_000);
+  if (due.getTime() < minAllowed.getTime()) {
+    throw new Error('Due date must be at least 1 minute in the future');
+  }
+
+  return due.toISOString();
+}
+
+export async function GET() {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  }
+
+  const todos = todoDB.listByUserId(session.userId);
+  return NextResponse.json({ success: true, data: todos });
+}
+
+export async function POST(request: NextRequest) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  }
+
+  try {
+    const body = await request.json();
+    const parsed = createTodoSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ success: false, error: parsed.error.issues[0]?.message ?? 'Invalid request' }, { status: 400 });
+    }
+
+    const todo = todoDB.create({
+      userId: session.userId,
+      title: parsed.data.title,
+      priority: parsed.data.priority as Priority,
+      dueDate: ensureFutureDueDate(parsed.data.due_date),
+    });
+
+    return NextResponse.json({ success: true, data: todo }, { status: 201 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unable to create todo';
+    const status = message.includes('Due date') ? 400 : 500;
+    return NextResponse.json({ success: false, error: message }, { status });
+  }
+}
