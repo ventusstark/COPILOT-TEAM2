@@ -669,5 +669,3 @@ For questions or issues, refer to the troubleshooting section or ask Copilot Cha
 ```
 @workspace I'm having trouble with [describe issue]
 ```
-#   C O P I L O T - T E A M 2  
- 
