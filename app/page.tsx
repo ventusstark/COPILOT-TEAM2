@@ -30,14 +30,20 @@ const sectionCardStyle: React.CSSProperties = {
 
 function priorityColor(priority: Priority): string {
   if (priority === 'high') return '#b91c1c';
-  if (priority === 'medium') return '#b45309';
+  if (priority === 'medium') return '#FFFF00';
   return '#1d4ed8';
+}
+
+function priorityTextColor(priority: Priority): string {
+  if (priority === 'medium') return '#000000';
+  return '#ffffff';
 }
 
 export default function HomePage() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [createError, setCreateError] = useState('');
+  const [editError, setEditError] = useState('');
 
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
@@ -51,7 +57,7 @@ export default function HomePage() {
 
   async function loadTodos() {
     setLoading(true);
-    setError('');
+    setCreateError('');
     try {
       const response = await fetch('/api/todos');
       if (!response.ok) {
@@ -65,7 +71,7 @@ export default function HomePage() {
       const data = (await response.json()) as TodoApiResponse;
       setTodos(data.data ?? []);
     } catch {
-      setError('Failed to load todos');
+      setCreateError('Failed to load todos');
     } finally {
       setLoading(false);
     }
@@ -100,10 +106,10 @@ export default function HomePage() {
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError('');
+    setCreateError('');
 
     if (!title.trim()) {
-      setError('Title is required');
+      setCreateError('Title is required');
       return;
     }
 
@@ -121,7 +127,7 @@ export default function HomePage() {
 
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setError(data.error ?? 'Unable to create todo');
+        setCreateError(data.error ?? 'Unable to create todo');
         return;
       }
 
@@ -130,13 +136,14 @@ export default function HomePage() {
       setDueDate('');
       await loadTodos();
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Unable to create todo');
+      setCreateError(createError instanceof Error ? createError.message : 'Unable to create todo');
     } finally {
       setSaving(false);
     }
   }
 
   function startEditing(todo: Todo) {
+    setEditError('');
     setEditingId(todo.id);
     setEditingTitle(todo.title);
     setEditingPriority(todo.priority);
@@ -144,9 +151,9 @@ export default function HomePage() {
   }
 
   async function handleSaveEdit(todoId: number) {
-    setError('');
+    setEditError('');
     if (!editingTitle.trim()) {
-      setError('Title is required');
+      setEditError('Title is required');
       return;
     }
 
@@ -164,19 +171,20 @@ export default function HomePage() {
 
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setError(data.error ?? 'Unable to update todo');
+        setEditError(data.error ?? 'Unable to update todo');
         return;
       }
 
+      setEditError('');
       setEditingId(null);
       await loadTodos();
     } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : 'Unable to update todo');
+      setEditError(updateError instanceof Error ? updateError.message : 'Unable to update todo');
     }
   }
 
   async function toggleComplete(todo: Todo) {
-    setError('');
+    setCreateError('');
     try {
       const response = await fetch(`/api/todos/${todo.id}`, {
         method: 'PUT',
@@ -186,22 +194,22 @@ export default function HomePage() {
 
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setError(data.error ?? 'Unable to update todo');
+        setCreateError(data.error ?? 'Unable to update todo');
         return;
       }
 
       await loadTodos();
     } catch {
-      setError('Unable to update todo');
+      setCreateError('Unable to update todo');
     }
   }
 
   async function deleteTodo(todoId: number) {
-    setError('');
+    setCreateError('');
     const response = await fetch(`/api/todos/${todoId}`, { method: 'DELETE' });
     const data = (await response.json()) as { error?: string };
     if (!response.ok) {
-      setError(data.error ?? 'Unable to delete todo');
+      setCreateError(data.error ?? 'Unable to delete todo');
       return;
     }
 
@@ -234,14 +242,20 @@ export default function HomePage() {
             <input
               aria-label="Edit title"
               value={editingTitle}
-              onChange={(event) => setEditingTitle(event.target.value)}
+              onChange={(event) => {
+                setEditError('');
+                setEditingTitle(event.target.value);
+              }}
               style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
             />
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <select
                 aria-label="Edit priority"
                 value={editingPriority}
-                onChange={(event) => setEditingPriority(event.target.value as Priority)}
+                onChange={(event) => {
+                  setEditError('');
+                  setEditingPriority(event.target.value as Priority);
+                }}
                 style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
               >
                 <option value="high">High</option>
@@ -252,7 +266,10 @@ export default function HomePage() {
                 aria-label="Edit due date"
                 type="datetime-local"
                 value={editingDueDate}
-                onChange={(event) => setEditingDueDate(event.target.value)}
+                onChange={(event) => {
+                  setEditError('');
+                  setEditingDueDate(event.target.value);
+                }}
                 style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
               />
               <button
@@ -270,7 +287,10 @@ export default function HomePage() {
               </button>
               <button
                 type="button"
-                onClick={() => setEditingId(null)}
+                onClick={() => {
+                  setEditError('');
+                  setEditingId(null);
+                }}
                 style={{
                   padding: '8px 12px',
                   border: '1px solid #d1d5db',
@@ -281,18 +301,21 @@ export default function HomePage() {
                 Cancel
               </button>
             </div>
+            {editError ? <p style={{ color: '#b91c1c', margin: 0 }}>{editError}</p> : null}
           </>
         ) : (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
               <div>
-                <strong style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}>{todo.title}</strong>
+                <strong style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}>
+                  {todo.title}
+                </strong>
                 <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <span
                     style={{
                       fontSize: 12,
                       fontWeight: 700,
-                      color: '#fff',
+                      color: priorityTextColor(todo.priority),
                       backgroundColor: priorityColor(todo.priority),
                       padding: '2px 8px',
                       borderRadius: 999,
@@ -416,7 +439,7 @@ export default function HomePage() {
               {saving ? 'Adding...' : 'Add'}
             </button>
           </div>
-          {error ? <p style={{ color: '#b91c1c', marginBottom: 0 }}>{error}</p> : null}
+          {createError ? <p style={{ color: '#b91c1c', marginBottom: 0 }}>{createError}</p> : null}
         </form>
 
         {loading ? <p>Loading todos...</p> : null}
@@ -434,8 +457,8 @@ export default function HomePage() {
           {active.length === 0 ? <p style={{ color: '#6b7280', marginBottom: 0 }}>No active todos.</p> : null}
         </section>
 
-        <section style={sectionCardStyle}>
-          <h2 style={{ marginTop: 0 }}>Completed ({completed.length})</h2>
+        <section style={{ ...sectionCardStyle, borderColor: '#86efac', backgroundColor: '#f0fdf4' }}>
+          <h2 style={{ marginTop: 0, color: '#15803d' }}>Completed ({completed.length})</h2>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>{completed.map(renderTodoItem)}</ul>
           {completed.length === 0 ? <p style={{ color: '#6b7280', marginBottom: 0 }}>No completed todos.</p> : null}
         </section>
