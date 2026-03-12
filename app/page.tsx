@@ -886,6 +886,7 @@ export default function HomePage() {
   function renderTodoItem(todo: Todo) {
     const isEditing = editingId === todo.id;
     const stats = getSubtaskStats(todo);
+    const hasSubtasks = stats.total > 0;
     const subtasks = (todo.subtasks ?? []).slice().sort((a, b) => a.position - b.position || a.id - b.id);
     const isExpanded = Boolean(expandedSubtasks[todo.id]);
     const isSubtaskBusy = Boolean(subtaskSaving[todo.id]);
@@ -1081,27 +1082,31 @@ export default function HomePage() {
             </div>
 
             <div style={{ marginTop: 10, padding: 10, border: '1px solid #dbeafe', borderRadius: 10, backgroundColor: '#f8fafc' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ color: '#334155', fontSize: 13, fontWeight: 600 }}>{stats.completedCount}/{stats.total} subtasks</span>
-                <span style={{ color: '#0f766e', fontSize: 13, fontWeight: 700 }}>{stats.percentage}%</span>
-              </div>
-              <div
-                role="progressbar"
-                aria-label={`Subtask progress for ${todo.title}`}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={stats.percentage}
-                style={{ height: 8, borderRadius: 999, backgroundColor: '#e2e8f0', overflow: 'hidden' }}
-              >
-                <div
-                  style={{
-                    width: `${stats.percentage}%`,
-                    height: '100%',
-                    backgroundColor: '#0f766e',
-                    transition: 'width 150ms ease-out',
-                  }}
-                />
-              </div>
+              {hasSubtasks ? (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                    <span style={{ color: '#334155', fontSize: 13, fontWeight: 600 }}>{stats.completedCount}/{stats.total} subtasks</span>
+                    <span style={{ color: '#0f766e', fontSize: 13, fontWeight: 700 }}>{stats.percentage}%</span>
+                  </div>
+                  <div
+                    role="progressbar"
+                    aria-label={`Subtask progress for ${todo.title}`}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={stats.percentage}
+                    style={{ height: 8, borderRadius: 999, backgroundColor: '#e2e8f0', overflow: 'hidden' }}
+                  >
+                    <div
+                      style={{
+                        width: `${stats.percentage}%`,
+                        height: '100%',
+                        backgroundColor: '#0f766e',
+                        transition: 'width 150ms ease-out',
+                      }}
+                    />
+                  </div>
+                </>
+              ) : null}
 
               <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <button type="button" onClick={() => toggleSubtasks(todo.id)} style={chipButtonStyle}>

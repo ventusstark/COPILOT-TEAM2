@@ -131,6 +131,7 @@ db.exec(`
     completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
     position INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
     FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
   );
 
@@ -214,6 +215,11 @@ try {
 } catch {
   // Column already exists.
 }
+try {
+  db.exec("ALTER TABLE subtasks ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
+} catch {
+  // Column already exists.
+}
 
 const migrationTimestamp = getSingaporeNow().toISOString();
 db.prepare(`
@@ -223,6 +229,11 @@ db.prepare(`
       completed = COALESCE(completed, 0),
       recurrence_enabled = COALESCE(recurrence_enabled, 0)
 `).run(migrationTimestamp, migrationTimestamp);
+
+db.prepare(`
+  UPDATE subtasks
+  SET updated_at = COALESCE(updated_at, created_at, ?)
+`).run(migrationTimestamp);
 
 const userSelectByUsername = db.prepare(
   'SELECT id, username, created_at FROM users WHERE username = ?'
@@ -492,8 +503,8 @@ export const subtaskDB = {
 
     const createdAt = getSingaporeNow().toISOString();
     const info = db.prepare(
-      'INSERT INTO subtasks (todo_id, title, completed, position, created_at) VALUES (?, ?, 0, ?, ?)'
-    ).run(input.todoId, input.title.trim(), input.position, createdAt);
+      'INSERT INTO subtasks (todo_id, title, completed, position, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?)'
+    ).run(input.todoId, input.title.trim(), input.position, createdAt, createdAt);
 
     const created = db.prepare(
       'SELECT id, todo_id, title, completed, position, created_at FROM subtasks WHERE id = ?'
