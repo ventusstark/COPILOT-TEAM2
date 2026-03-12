@@ -103,6 +103,18 @@ const primaryButtonStyle: React.CSSProperties = {
   padding: '10px 14px',
 };
 
+const dropdownItemStyle: React.CSSProperties = {
+  display: 'block',
+  width: '100%',
+  textAlign: 'left',
+  padding: '10px 16px',
+  border: 'none',
+  backgroundColor: 'transparent',
+  color: '#0f172a',
+  cursor: 'pointer',
+  fontSize: 14,
+};
+
 function safeTagColor(color: string): string {
   return /^#[0-9a-f]{6}$/i.test(color) ? color : '#0ea5e9';
 }
@@ -161,12 +173,15 @@ function toSingaporeDateTimeLocalValue(input: string | null): string {
 export default function HomePage() {
   const notificationState = useNotifications();
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const dataMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [todos, setTodos] = useState<Todo[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [currentTimeMs, setCurrentTimeMs] = useState(() => getSingaporeNow().getTime());
   const [loading, setLoading] = useState(true);
+  const [username, setUsername] = useState('');
+  const [showDataMenu, setShowDataMenu] = useState(false);
 
   const [message, setMessage] = useState('');
   const [createError, setCreateError] = useState('');
@@ -297,6 +312,27 @@ export default function HomePage() {
       window.clearInterval(intervalId);
     };
   }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const response = await fetch('/api/auth/me');
+      if (response.ok) {
+        const data = (await response.json()) as { username?: string };
+        setUsername(data.username ?? '');
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!showDataMenu) return;
+    function handleClickOutside(event: MouseEvent) {
+      if (dataMenuRef.current && !dataMenuRef.current.contains(event.target as Node)) {
+        setShowDataMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showDataMenu]);
 
   function validateDueDate(rawDueDate: string): string | null {
     if (!rawDueDate) {
@@ -1206,19 +1242,117 @@ export default function HomePage() {
         <header style={{ display: 'grid', gap: 14, marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
             <div>
-              <h1 style={{ margin: 0, color: '#0f172a', fontSize: 'clamp(1.6rem, 3.6vw, 2.1rem)' }}>Todo List</h1>
-              <p style={{ margin: '6px 0 0', color: '#475569' }}>
-                {totalTodos} visible, {active.length} active, {completed.length} completed
-              </p>
+              <p style={{ margin: 0, color: '#475569', fontSize: 14 }}>Welcome, {username || '…'}</p>
+              <h1 style={{ margin: 0, color: '#0f172a', fontSize: 'clamp(1.6rem, 3.6vw, 2.1rem)' }}>Todo App</h1>
             </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <a href="/calendar" style={{ ...chipButtonStyle, textDecoration: 'none' }}>Calendar</a>
-              <button type="button" style={chipButtonStyle} onClick={() => void exportTodos('json')}>Export JSON</button>
-              <button type="button" style={chipButtonStyle} onClick={() => void exportTodos('csv')}>Export CSV</button>
-              <button type="button" style={chipButtonStyle} onClick={() => importInputRef.current?.click()}>Import JSON</button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              {/* Data dropdown */}
+              <div ref={dataMenuRef} style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  style={chipButtonStyle}
+                  onClick={() => setShowDataMenu((prev) => !prev)}
+                  aria-haspopup="true"
+                  aria-expanded={showDataMenu}
+                >
+                  ⋮ Data
+                </button>
+                {showDataMenu && (
+                  <div
+                    role="menu"
+                    style={{
+                      position: 'absolute',
+                      top: 'calc(100% + 4px)',
+                      right: 0,
+                      backgroundColor: '#ffffff',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: 10,
+                      boxShadow: '0 4px 16px rgba(15,23,42,0.12)',
+                      zIndex: 50,
+                      minWidth: 160,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      style={dropdownItemStyle}
+                      onClick={() => { void exportTodos('json'); setShowDataMenu(false); }}
+                    >
+                      Export JSON
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      style={dropdownItemStyle}
+                      onClick={() => { void exportTodos('csv'); setShowDataMenu(false); }}
+                    >
+                      Export CSV
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      style={dropdownItemStyle}
+                      onClick={() => { importInputRef.current?.click(); setShowDataMenu(false); }}
+                    >
+                      Import JSON
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      style={dropdownItemStyle}
+                      onClick={() => {
+                        setShowTagModal(true);
+                        setShowDataMenu(false);
+                      }}
+                    >
+                      Manage Tags
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Calendar */}
+              <a
+                href="/calendar"
+                style={{ ...chipButtonStyle, textDecoration: 'none', backgroundColor: '#7c3aed', color: '#ffffff', border: 'none' }}
+              >
+                Calendar
+              </a>
+
+              {/* Templates */}
               <button
                 type="button"
-                style={notificationState.enabled ? primaryButtonStyle : chipButtonStyle}
+                style={{ ...chipButtonStyle, backgroundColor: '#4f46e5', color: '#ffffff', border: 'none' }}
+                onClick={() => setShowTemplateModal(true)}
+              >
+                Templates
+              </button>
+
+              {/* Notifications bell */}
+              <button
+                type="button"
+                aria-label={!notificationState.resolved
+                  ? 'Checking Notifications…'
+                  : notificationState.permission === 'granted'
+                  ? notificationState.enabled ? 'Notifications Enabled' : 'Notifications Paused'
+                  : notificationState.permission === 'denied' ? 'Notifications Blocked'
+                  : notificationState.supported ? 'Enable Notifications' : 'Notifications Unavailable'}
+                title={!notificationState.resolved
+                  ? 'Checking Notifications…'
+                  : notificationState.permission === 'granted'
+                  ? notificationState.enabled ? 'Notifications Enabled' : 'Notifications Paused'
+                  : notificationState.permission === 'denied' ? 'Notifications Blocked'
+                  : notificationState.supported ? 'Enable Notifications' : 'Notifications Unavailable'}
+                style={{
+                  ...chipButtonStyle,
+                  backgroundColor: notificationState.enabled ? '#f97316' : undefined,
+                  color: notificationState.enabled ? '#ffffff' : undefined,
+                  border: notificationState.enabled ? 'none' : undefined,
+                  fontSize: 18,
+                  lineHeight: 1,
+                  padding: '8px 12px',
+                }}
                 onClick={() => {
                   if (notificationState.permission === 'granted') {
                     notificationState.toggleEnabled();
@@ -1228,21 +1362,17 @@ export default function HomePage() {
                 }}
                 disabled={!notificationState.resolved || !notificationState.supported || notificationState.permission === 'denied'}
               >
-                {!notificationState.resolved
-                  ? 'Checking Notifications...'
-                  : notificationState.permission === 'granted'
-                  ? notificationState.enabled
-                    ? 'Notifications Enabled'
-                    : 'Notifications Paused'
-                  : notificationState.permission === 'denied'
-                    ? 'Notifications Blocked'
-                    : notificationState.supported
-                      ? 'Enable Notifications'
-                      : 'Notifications Unavailable'}
+                🔔
               </button>
-              <button type="button" style={chipButtonStyle} onClick={() => setShowTagModal(true)}>Manage Tags</button>
-              <button type="button" style={chipButtonStyle} onClick={() => setShowTemplateModal(true)}>Templates</button>
-              <button type="button" style={chipButtonStyle} onClick={() => void handleLogout()}>Logout</button>
+
+              {/* Logout */}
+              <button
+                type="button"
+                style={{ ...chipButtonStyle, backgroundColor: '#6b7280', color: '#ffffff', border: 'none' }}
+                onClick={() => void handleLogout()}
+              >
+                Logout
+              </button>
             </div>
           </div>
 
@@ -1429,6 +1559,30 @@ export default function HomePage() {
           <h2 style={{ marginTop: 0, color: '#166534' }}>Completed ({completed.length})</h2>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>{completed.map(renderTodoItem)}</ul>
           {completed.length === 0 ? <p style={{ color: '#64748b', marginBottom: 0 }}>No completed todos.</p> : null}
+        </section>
+
+        <section
+          style={{
+            ...cardStyle,
+            marginTop: 14,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+            gap: 12,
+            textAlign: 'center',
+          }}
+        >
+          <div>
+            <p style={{ margin: 0, fontSize: 40, lineHeight: 1, fontWeight: 700, color: '#dc2626' }}>{overdue.length}</p>
+            <p style={{ margin: '6px 0 0', color: '#475569' }}>Overdue</p>
+          </div>
+          <div>
+            <p style={{ margin: 0, fontSize: 40, lineHeight: 1, fontWeight: 700, color: '#2563eb' }}>{active.length}</p>
+            <p style={{ margin: '6px 0 0', color: '#475569' }}>Pending</p>
+          </div>
+          <div>
+            <p style={{ margin: 0, fontSize: 40, lineHeight: 1, fontWeight: 700, color: '#16a34a' }}>{completed.length}</p>
+            <p style={{ margin: '6px 0 0', color: '#475569' }}>Completed</p>
+          </div>
         </section>
 
         {showTagModal ? (
