@@ -47,3 +47,20 @@ export async function createTodo(page: Page, input: {
 
   await page.getByRole('button', { name: 'Add' }).click();
 }
+
+export async function createTodoWithReminder(page: Page, input: {
+  title: string;
+  dueDate: string;
+  reminderMinutes: number;
+  priority?: 'high' | 'medium' | 'low';
+}): Promise<void> {
+  await page.getByLabel('Todo title').fill(input.title);
+
+  if (input.priority) {
+    await page.getByLabel('Todo priority').selectOption(input.priority);
+  }
+
+  await page.getByLabel('Todo due date').fill(input.dueDate);
+  await page.getByLabel('Todo reminder').selectOption(String(input.reminderMinutes));
+  await page.getByRole('button', { name: 'Add' }).click();
+}

@@ -1,6 +1,8 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useNotifications } from '@/lib/hooks/useNotifications';
+import { getReminderLabel, REMINDER_OPTIONS } from '@/lib/reminders';
 import { formatSingaporeDate, getSingaporeNow } from '@/lib/timezone';
 
 type Priority = 'high' | 'medium' | 'low';
@@ -10,6 +12,7 @@ interface Todo {
   title: string;
   priority: Priority;
   due_date: string | null;
+  reminder_minutes: number | null;
   completed: number;
 }
 
@@ -35,6 +38,7 @@ function priorityColor(priority: Priority): string {
 }
 
 export default function HomePage() {
+  const notificationState = useNotifications();
   const [todos, setTodos] = useState<Todo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -42,12 +46,14 @@ export default function HomePage() {
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
   const [dueDate, setDueDate] = useState('');
+  const [reminderMinutes, setReminderMinutes] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [editingPriority, setEditingPriority] = useState<Priority>('medium');
   const [editingDueDate, setEditingDueDate] = useState('');
+  const [editingReminderMinutes, setEditingReminderMinutes] = useState<number | null>(null);
 
   async function loadTodos() {
     setLoading(true);
@@ -98,6 +104,28 @@ export default function HomePage() {
     return parsed.toISOString();
   }
 
+  function parseReminderMinutes(value: string): number | null {
+    if (!value) {
+      return null;
+    }
+
+    return Number(value);
+  }
+
+  function handleDueDateChange(value: string) {
+    setDueDate(value);
+    if (!value) {
+      setReminderMinutes(null);
+    }
+  }
+
+  function handleEditingDueDateChange(value: string) {
+    setEditingDueDate(value);
+    if (!value) {
+      setEditingReminderMinutes(null);
+    }
+  }
+
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
@@ -116,6 +144,7 @@ export default function HomePage() {
           title: title.trim(),
           priority,
           due_date: validateDueDate(dueDate),
+          reminder_minutes: dueDate ? reminderMinutes : null,
         }),
       });
 
@@ -128,6 +157,7 @@ export default function HomePage() {
       setTitle('');
       setPriority('medium');
       setDueDate('');
+      setReminderMinutes(null);
       await loadTodos();
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : 'Unable to create todo');
@@ -141,6 +171,7 @@ export default function HomePage() {
     setEditingTitle(todo.title);
     setEditingPriority(todo.priority);
     setEditingDueDate(todo.due_date ? todo.due_date.slice(0, 16) : '');
+    setEditingReminderMinutes(todo.reminder_minutes ?? null);
   }
 
   async function handleSaveEdit(todoId: number) {
@@ -159,6 +190,7 @@ export default function HomePage() {
           title: editingTitle.trim(),
           priority: editingPriority,
           due_date: dueDateIso,
+          reminder_minutes: dueDateIso ? editingReminderMinutes : null,
         }),
       });
 
@@ -252,9 +284,23 @@ export default function HomePage() {
                 aria-label="Edit due date"
                 type="datetime-local"
                 value={editingDueDate}
-                onChange={(event) => setEditingDueDate(event.target.value)}
+                onChange={(event) => handleEditingDueDateChange(event.target.value)}
                 style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
               />
+              <select
+                aria-label="Edit reminder"
+                value={editingReminderMinutes === null ? '' : String(editingReminderMinutes)}
+                onChange={(event) => setEditingReminderMinutes(parseReminderMinutes(event.target.value))}
+                disabled={!editingDueDate}
+                style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
+              >
+                <option value="">No reminder</option>
+                {REMINDER_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {getReminderLabel(option)}
+                  </option>
+                ))}
+              </select>
               <button
                 type="button"
                 onClick={() => void handleSaveEdit(todo.id)}
@@ -284,6 +330,10 @@ export default function HomePage() {
           </>
         ) : (
           <>
+            {(() => {
+              const reminderLabel = getReminderLabel(todo.reminder_minutes);
+
+              return (
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
               <div>
                 <strong style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}>{todo.title}</strong>
@@ -306,6 +356,21 @@ export default function HomePage() {
                   ) : (
                     <span style={{ color: '#6b7280', fontSize: 13 }}>No due date</span>
                   )}
+                  {reminderLabel ? (
+                    <span
+                      style={{
+                        color: '#0f766e',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        border: '1px solid #99f6e4',
+                        backgroundColor: '#ecfeff',
+                        padding: '2px 8px',
+                        borderRadius: 999,
+                      }}
+                    >
+                      {reminderLabel}
+                    </span>
+                  ) : null}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -349,6 +414,8 @@ export default function HomePage() {
                 </button>
               </div>
             </div>
+              );
+            })()}
           </>
         )}
       </li>
@@ -366,18 +433,40 @@ export default function HomePage() {
       <div style={{ maxWidth: 900, margin: '0 auto' }}>
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
           <h1 style={{ margin: 0, fontSize: 32 }}>Todo Dashboard</h1>
-          <button
-            type="button"
-            onClick={() => void handleLogout()}
-            style={{ border: '1px solid #d1d5db', background: '#fff', borderRadius: 8, padding: '8px 12px' }}
-          >
-            Logout
-          </button>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => void notificationState.requestPermission()}
+              disabled={!notificationState.supported || notificationState.permission === 'denied'}
+              style={{
+                border: '1px solid #d1d5db',
+                background: notificationState.enabled ? '#0f766e' : '#fff',
+                color: notificationState.enabled ? '#fff' : '#111827',
+                borderRadius: 8,
+                padding: '8px 12px',
+              }}
+            >
+              {notificationState.permission === 'granted'
+                ? 'Notifications Enabled'
+                : notificationState.permission === 'denied'
+                  ? 'Notifications Blocked'
+                  : notificationState.supported
+                    ? 'Enable Notifications'
+                    : 'Notifications Unavailable'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleLogout()}
+              style={{ border: '1px solid #d1d5db', background: '#fff', borderRadius: 8, padding: '8px 12px' }}
+            >
+              Logout
+            </button>
+          </div>
         </header>
 
         <form onSubmit={handleCreate} style={sectionCardStyle}>
           <h2 style={{ marginTop: 0 }}>Create Todo</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr auto', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1.5fr 1fr auto', gap: 8 }}>
             <input
               value={title}
               onChange={(event) => setTitle(event.target.value)}
@@ -398,10 +487,24 @@ export default function HomePage() {
             <input
               type="datetime-local"
               value={dueDate}
-              onChange={(event) => setDueDate(event.target.value)}
+              onChange={(event) => handleDueDateChange(event.target.value)}
               aria-label="Todo due date"
               style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid #d1d5db' }}
             />
+            <select
+              value={reminderMinutes === null ? '' : String(reminderMinutes)}
+              onChange={(event) => setReminderMinutes(parseReminderMinutes(event.target.value))}
+              aria-label="Todo reminder"
+              disabled={!dueDate}
+              style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid #d1d5db' }}
+            >
+              <option value="">No reminder</option>
+              {REMINDER_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {getReminderLabel(option)}
+                </option>
+              ))}
+            </select>
             <button
               type="submit"
               disabled={saving}

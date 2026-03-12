@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { type Priority, todoDB } from '@/lib/db';
+import { reminderMinutesSchema, type ReminderMinutes } from '@/lib/reminders';
 import { getSingaporeNow } from '@/lib/timezone';
 
 const updateTodoSchema = z.object({
   title: z.string().trim().min(1, 'Title is required').max(500).optional(),
   priority: z.enum(['high', 'medium', 'low']).optional(),
   due_date: z.string().datetime().nullable().optional(),
+  reminder_minutes: reminderMinutesSchema.nullable().optional(),
   completed: z.boolean().optional(),
 });
 
@@ -94,16 +96,31 @@ export async function PUT(
         ? existing.completed_at
         : getSingaporeNow().toISOString()
       : null;
+    const dueDate =
+      parsed.data.due_date === undefined
+        ? existing.due_date
+        : ensureFutureDueDate(parsed.data.due_date);
+    let reminderMinutes =
+      parsed.data.reminder_minutes === undefined
+        ? existing.reminder_minutes ?? null
+        : parsed.data.reminder_minutes;
+
+    if (!dueDate) {
+      reminderMinutes = null;
+    }
+
+    const dueDateChanged = dueDate !== existing.due_date;
+    const reminderChanged = reminderMinutes !== (existing.reminder_minutes ?? null);
+    const lastNotificationSent = dueDateChanged || reminderChanged ? null : existing.last_notification_sent ?? null;
 
     const updated = todoDB.update({
       id: todoId,
       userId: session.userId,
       title: parsed.data.title ?? existing.title,
       priority: (parsed.data.priority ?? existing.priority) as Priority,
-      dueDate:
-        parsed.data.due_date === undefined
-          ? existing.due_date
-          : ensureFutureDueDate(parsed.data.due_date),
+      dueDate,
+      reminderMinutes: reminderMinutes as ReminderMinutes | null,
+      lastNotificationSent,
       completed,
       completedAt,
     });

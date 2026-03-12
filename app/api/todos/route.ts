@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSession } from '@/lib/auth';
 import { type Priority, todoDB } from '@/lib/db';
+import { reminderMinutesSchema, type ReminderMinutes } from '@/lib/reminders';
 import { getSingaporeNow } from '@/lib/timezone';
 
 const createTodoSchema = z.object({
   title: z.string().trim().min(1, 'Title is required').max(500),
   priority: z.enum(['high', 'medium', 'low']).default('medium'),
   due_date: z.string().datetime().optional().nullable(),
+  reminder_minutes: reminderMinutesSchema.optional().nullable(),
 });
 
 function ensureFutureDueDate(dueDate: string | null | undefined): string | null {
@@ -51,11 +53,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: parsed.error.issues[0]?.message ?? 'Invalid request' }, { status: 400 });
     }
 
+    const dueDate = ensureFutureDueDate(parsed.data.due_date);
+    if (!dueDate && parsed.data.reminder_minutes !== null && parsed.data.reminder_minutes !== undefined) {
+      return NextResponse.json({ success: false, error: 'Reminder requires a due date' }, { status: 400 });
+    }
+
     const todo = todoDB.create({
       userId: session.userId,
       title: parsed.data.title,
       priority: parsed.data.priority as Priority,
-      dueDate: ensureFutureDueDate(parsed.data.due_date),
+      dueDate,
+      reminderMinutes: (parsed.data.reminder_minutes ?? null) as ReminderMinutes | null,
     });
 
     return NextResponse.json({ success: true, data: todo }, { status: 201 });
