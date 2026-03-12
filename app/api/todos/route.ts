@@ -10,6 +10,7 @@ const createTodoSchema = z.object({
   priority: z.enum(['high', 'medium', 'low']).default('medium'),
   due_date: z.string().datetime().optional().nullable(),
   reminder_minutes: reminderMinutesSchema.optional().nullable(),
+  tag_ids: z.array(z.number().int().positive()).optional(),
   recurrence_enabled: z.boolean().optional().default(false),
   recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).optional().nullable(),
 }).superRefine((data, ctx) => {
@@ -79,6 +80,7 @@ export async function POST(request: NextRequest) {
       priority: parsed.data.priority as Priority,
       dueDate,
       reminderMinutes: (parsed.data.reminder_minutes ?? null) as ReminderMinutes | null,
+      tagIds: parsed.data.tag_ids,
       recurrenceEnabled,
       recurrencePattern,
     });

@@ -852,6 +852,116 @@ Or via Dashboard:
 
 **Total Score:** _____ / 200
 
+### Current Repo Assessment (March 12, 2026)
+
+This percentage-based assessment is based on the current repository contents, existing automated tests, and verified build status. It does not assume unverified deployment steps or manual cross-browser testing have been completed.
+
+**Overall Completion:** **62%**
+
+**Scoring Breakdown:**
+- **Feature Completeness:** **85 / 110** (**77%**)
+- **Testing Coverage:** **12 / 30** (**40%**)
+- **Deployment:** **10 / 30** (**33%**)
+- **Quality & Performance:** **17 / 30** (**57%**)
+
+**Weighted Total:** **124 / 200** (**62%**)
+
+### Assessed Status by Area
+
+**Core Features:** Mostly implemented. Features 01, 02, 03, 04, 06, and 11 are substantially present in the codebase. Features 05, 07, 08, 09, and 10 are only partially complete against this checklist because some required APIs, UI flows, or acceptance details are still missing.
+
+**Testing:** Playwright coverage exists for Features 02, 04, and 06 to 11, plus shared helpers and virtual WebAuthn support. Unit test coverage is effectively absent, and the repo does not currently demonstrate the full 11-feature E2E matrix or repeated stability runs from this checklist.
+
+**Deployment:** The project has Railway deployment guides and a successful production build, but there is no verified deployment artifact, no `.env.example`, and no evidence in the repo that Vercel or Railway production validation has been completed.
+
+**Quality & Performance:** TypeScript and build are passing, authentication middleware exists, prepared statements and useful SQLite indexes are present, and dark-mode UI is implemented. However, the checklist items for formal accessibility auditing, performance budgets, browser compatibility testing, and production error handling remain incomplete or unverified.
+
+### Major Gaps Preventing Higher Completion
+
+- **Subtasks and progress tracking** are not fully surfaced in the current UI and route structure, despite database support existing.
+- **Template system** is missing parts of the rubric such as update flow, category filtering, preview depth, and subtask serialization behavior.
+- **Search/filtering** lacks some rubric items such as debouncing, tag-name search behavior, and a stronger filter summary UX.
+- **Export/import** does not yet satisfy the full backup/restore rubric for versioning, associations, and richer remapping behavior.
+- **Calendar** is missing several checklist expectations such as a dedicated holiday endpoint, day-detail modal behavior, URL month state, and some presentation details.
+- **Deployment and production QA** are the largest unfinished area in the document.
+
+### Recommended Interpretation
+
+- If you measure only the implemented app feature surface, the project is roughly **75% to 80% complete**.
+- If you measure against the full `EVALUATION.md` rubric including testing depth, deployment, production hardening, and browser validation, the project is currently **about 62% complete**.
+
+### Roadmap To 80%+
+
+The fastest path from **62%** to **80%+** is to focus on checklist areas that move multiple scoring categories at once.
+
+#### Priority 1: Finish the missing core feature gaps
+**Expected gain:** about **+10 to +14 points**
+
+- Complete **Feature 05: Subtasks & Progress Tracking** end to end.
+- Close the missing rubric items in **Feature 07: Template System**.
+- Close the missing rubric items in **Feature 09: Export & Import**.
+- Close the missing rubric items in **Feature 10: Calendar View**.
+
+Why this is first:
+- Core features are the largest scoring bucket.
+- Several of these features already have partial foundations in the repo, so the remaining work is incremental rather than greenfield.
+
+#### Priority 2: Raise automated testing coverage sharply
+**Expected gain:** about **+8 to +12 points**
+
+- Add the missing E2E coverage for Features **01, 03, and 05**.
+- Add at least a focused unit test layer for:
+  - timezone/date calculations
+  - reminder calculation logic
+  - import validation/remapping
+  - recurrence date generation
+  - progress calculation
+- Run the critical Playwright suite multiple times and record stability.
+
+Why this is second:
+- Testing is currently one of the lowest-scoring sections.
+- Better tests also reduce regression risk while finishing the remaining features.
+
+#### Priority 3: Close deployment-readiness basics
+**Expected gain:** about **+6 to +9 points**
+
+- Create `.env.example` with all required variables.
+- Align env naming across the app and docs for WebAuthn and JWT configuration.
+- Add a concrete production config path for Railway, since SQLite persistence makes Railway the more realistic target.
+- Verify `npm start` locally after build.
+- Add or verify deploy artifacts only if actually used: `railway.json`, `Procfile`, or `nixpacks.toml`.
+
+Why this matters:
+- Deployment is currently under-scored mostly because the repo lacks verifiable production setup artifacts, not because the app cannot build.
+
+#### Priority 4: Close quality and accessibility verification gaps
+**Expected gain:** about **+4 to +7 points**
+
+- Add a real lint command that passes in CI/local usage.
+- Audit interactive flows for keyboard access and focus visibility.
+- Fix remaining contrast issues and error-state consistency where needed.
+- Add explicit loading/error UX where async actions still feel implicit.
+- Add a lightweight error boundary or documented failure handling approach.
+
+Why this is fourth:
+- These items are important, but they generally add less score than finishing missing feature/testing/deployment work.
+
+### Recommended Execution Order
+
+1. Finish **Subtasks**, **Templates**, **Export/Import**, and **Calendar** gaps.
+2. Add the missing **E2E and unit tests** around those features.
+3. Add **`.env.example`** and production deployment artifacts for Railway.
+4. Do a final **quality/accessibility pass** and rerun build/tests.
+
+### Practical Target
+
+If the repo completes:
+- the remaining feature gaps,
+- the missing high-value tests,
+- the basic deployment artifacts,
+
+then reaching **80% to 85%** on this rubric is realistic without needing full cross-browser certification or a polished production operations setup.
+
 ### Rating Scale:
 - **180-200**: 🌟 Excellent - Production ready, exceeds expectations
 - **160-179**: 🎯 Very Good - Production ready, meets all requirements

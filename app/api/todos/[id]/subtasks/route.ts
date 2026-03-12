@@ -46,10 +46,17 @@ export async function POST(
       );
     }
 
+    const existingSubtasks = subtaskDB.listByTodoId(todoId, session.userId);
+    const nextPosition =
+      existingSubtasks.length === 0
+        ? 1
+        : Math.max(...existingSubtasks.map((subtask) => subtask.position)) + 1;
+
     const created = subtaskDB.create({
       todoId,
       userId: session.userId,
       title: parsed.data.title,
+      position: nextPosition,
     });
 
     if (!created) {

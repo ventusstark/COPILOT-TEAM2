@@ -1,31 +1,24 @@
-import type { Locator, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { expect } from '@playwright/test';
 
 export async function loginAs(page: Page, username: string): Promise<void> {
-  const response = await page.request.post('/api/auth/login', {
-    data: { username },
-  });
+  await page.goto('/login');
+  const response = await page.evaluate(async (selectedUsername) => {
+    const result = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: selectedUsername }),
+    });
 
-  if (!response.ok()) {
-    throw new Error(`Login failed for ${username}`);
+    return {
+      status: result.status,
+      body: await result.json(),
+    };
+  }, username);
+
+  if (response.status !== 200) {
+    throw new Error(`Login failed for ${username}: ${response.body?.error ?? 'unknown error'}`);
   }
-
-  const setCookieHeader = response.headers()['set-cookie'];
-  const token = setCookieHeader?.match(/todo_session=([^;]+)/)?.[1];
-  if (!token) {
-    throw new Error('Session cookie not found in login response');
-  }
-
-  await page.context().addCookies([
-    {
-      name: 'todo_session',
-      value: token,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
 
   await page.goto('/');
 }
@@ -65,24 +58,30 @@ export async function createTodoWithReminder(page: Page, input: {
   await page.getByRole('button', { name: 'Add' }).click();
 }
 
-export function getTodoItem(page: Page, title: string): Locator {
-  return page.locator('li').filter({ hasText: title }).first();
+export async function createTag(page: Page, input: {
+  name: string;
+  color: string;
+}): Promise<void> {
+  await page.getByRole('button', { name: 'Manage Tags' }).click();
+  await page.getByLabel('Tag name').fill(input.name);
+  await page.getByLabel('Tag color hex').fill(input.color);
+  await page.getByRole('button', { name: 'Add', exact: true }).nth(1).click();
+  await page.getByRole('button', { name: 'Close' }).click();
+  await expect(page.getByRole('button', { name: input.name }).first()).toBeVisible();
 }
 
-export async function openSubtasks(todoItem: Locator): Promise<void> {
-  await todoItem.getByRole('button', { name: /Subtasks/ }).click();
-}
-
-export async function addSubtask(todoItem: Locator, title: string): Promise<void> {
-  await todoItem.getByLabel('Subtask title').fill(title);
-  await todoItem.getByRole('button', { name: 'Add subtask' }).click();
-}
-
-export async function toggleSubtask(todoItem: Locator, title: string): Promise<void> {
-  await todoItem.getByLabel(`Toggle subtask ${title}`).click();
-}
-
-export async function deleteSubtask(todoItem: Locator, title: string): Promise<void> {
-  const row = todoItem.locator('li').filter({ hasText: title }).first();
-  await row.getByRole('button', { name: 'Delete subtask' }).click();
+export async function saveTemplateFromForm(page: Page, input: {
+  templateName: string;
+  description?: string;
+  category?: string;
+}): Promise<void> {
+  await page.getByRole('button', { name: 'Save as Template' }).click();
+  await page.getByLabel('Template name').fill(input.templateName);
+  if (input.description) {
+    await page.getByLabel('Template description').fill(input.description);
+  }
+  if (input.category) {
+    await page.getByLabel('Template category').fill(input.category);
+  }
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
 }

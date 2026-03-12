@@ -9,7 +9,7 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
     if (!username.trim()) {
@@ -34,7 +34,7 @@ export default function LoginPage() {
       router.push('/');
       router.refresh();
     } catch {
-      setError('Unable to login right now');
+      setError('Login failed');
     } finally {
       setSubmitting(false);
     }
@@ -47,26 +47,26 @@ export default function LoginPage() {
         display: 'grid',
         placeItems: 'center',
         padding: 24,
-        background: 'linear-gradient(145deg, #f4f7fb, #dbe4ef)',
+        background: 'linear-gradient(145deg, rgba(17, 24, 39, 0.78), rgba(2, 6, 23, 0.94))',
       }}
     >
       <form
-        onSubmit={onSubmit}
+        onSubmit={handleSubmit}
         style={{
           width: '100%',
           maxWidth: 420,
-          backgroundColor: '#ffffff',
+          backgroundColor: 'rgba(17, 24, 39, 0.92)',
           borderRadius: 16,
-          border: '1px solid #d1d5db',
+          border: '1px solid #374151',
           padding: 24,
-          boxShadow: '0 8px 30px rgba(17, 24, 39, 0.08)',
+          boxShadow: '0 8px 30px rgba(2, 6, 23, 0.6)',
         }}
       >
-        <h1 style={{ margin: 0, marginBottom: 10, fontSize: 28 }}>Login</h1>
-        <p style={{ marginTop: 0, marginBottom: 16, color: '#4b5563' }}>
-          Enter a username to start managing todos.
+        <h1 style={{ margin: 0, marginBottom: 10, fontSize: 28, color: '#f9fafb' }}>Login</h1>
+        <p style={{ marginTop: 0, marginBottom: 16, color: '#9ca3af' }}>
+          Enter your username to sign in or create an account.
         </p>
-        <label htmlFor="username" style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>
+        <label htmlFor="username" style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#e5e7eb' }}>
           Username
         </label>
         <input
@@ -79,7 +79,9 @@ export default function LoginPage() {
             width: '100%',
             padding: '10px 12px',
             borderRadius: 10,
-            border: '1px solid #d1d5db',
+            border: '1px solid #374151',
+            backgroundColor: '#0f172a',
+            color: '#f9fafb',
             marginBottom: 12,
           }}
         />

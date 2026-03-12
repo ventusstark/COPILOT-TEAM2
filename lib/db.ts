@@ -12,6 +12,44 @@ export interface User {
   created_at: string;
 }
 
+export interface Tag {
+  id: number;
+  user_id: number;
+  name: string;
+  color: string;
+  created_at: string;
+}
+
+export interface Subtask {
+  id: number;
+  todo_id: number;
+  title: string;
+  completed: number;
+  position: number;
+  created_at: string;
+}
+
+export interface Template {
+  id: number;
+  user_id: number;
+  name: string;
+  description: string | null;
+  category: string | null;
+  title_template: string;
+  priority: Priority;
+  recurrence_enabled: number;
+  recurrence_pattern: RecurrencePattern | null;
+  reminder_minutes: number | null;
+  created_at: string;
+}
+
+export interface Holiday {
+  id: number;
+  date: string;
+  name: string;
+  year: number;
+}
+
 export interface Todo {
   id: number;
   user_id: number;
@@ -26,431 +64,605 @@ export interface Todo {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
-  subtasks?: Subtask[];
-  subtask_count_total?: number;
-  subtask_count_completed?: number;
-  subtask_progress_percent?: number;
 }
 
-export interface Subtask {
-  id: number;
-  todo_id: number;
-  title: string;
-  completed: number;
-  position: number;
-  created_at: string;
-  updated_at: string;
+export interface TodoWithDetails extends Todo {
+  tags: Tag[];
+  subtasks: Subtask[];
 }
 
-type PreparedStatement = Database.Statement<any[]>;
 type ClaimPendingRemindersInput = {
   userId: number;
   now: Date;
   sentAt: string;
 };
 
-// In-memory storage for mock data when database is unavailable
-const mockTodosStore: Map<number, Todo[]> = new Map();
-const mockSubtasksStore: Map<number, Subtask[]> = new Map();
-let nextTodoId = 4;
-let nextSubtaskId = 1;
+const dbPath = path.join(process.cwd(), 'todos.db');
+const db = new Database(dbPath);
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
-// Initialize database with error handling
-let db: Database.Database | null = null;
-let dbError: Error | null = null;
-let userSelectByUsername: PreparedStatement | null = null;
-let userInsert: PreparedStatement | null = null;
-let userSelectById: PreparedStatement | null = null;
-let todoSelectAllByUser: PreparedStatement | null = null;
-let todoSelectByIdAndUser: PreparedStatement | null = null;
-let todoInsert: PreparedStatement | null = null;
-let todoSelectPendingRemindersByUser: PreparedStatement | null = null;
-let todoUpdate: PreparedStatement | null = null;
-let todoMarkReminderSent: PreparedStatement | null = null;
-let todoDelete: PreparedStatement | null = null;
-let todoClaimPendingRemindersByUser:
-  | ((input: ClaimPendingRemindersInput) => Todo[])
-  | null = null;
-let subtaskSelectByTodoAndUser: PreparedStatement | null = null;
-let subtaskSelectByIdForTodoAndUser: PreparedStatement | null = null;
-let subtaskSelectNextPositionByTodo: PreparedStatement | null = null;
-let subtaskInsert: PreparedStatement | null = null;
-let subtaskUpdateCompleted: PreparedStatement | null = null;
-let subtaskDelete: PreparedStatement | null = null;
-let subtaskCreateTransactional:
-  | ((input: {
-      todoId: number;
-      userId: number;
-      title: string;
-      nowIso: string;
-    }) => Subtask | null)
-  | null = null;
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+  );
 
-function calculateSubtaskProgress(subtasks: Subtask[]): {
-  total: number;
-  completed: number;
-  percentage: number;
-} {
-  const total = subtasks.length;
-  const completed = subtasks.filter((subtask) => subtask.completed === 1).length;
-  const percentage = total === 0 ? 0 : Math.round((completed / total) * 100);
+  CREATE TABLE IF NOT EXISTS todos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high', 'medium', 'low')),
+    due_date TEXT,
+    reminder_minutes INTEGER,
+    last_notification_sent TEXT,
+    recurrence_enabled INTEGER NOT NULL DEFAULT 0 CHECK (recurrence_enabled IN (0, 1)),
+    recurrence_pattern TEXT CHECK (recurrence_pattern IN ('daily', 'weekly', 'monthly', 'yearly') OR recurrence_pattern IS NULL),
+    completed INTEGER NOT NULL DEFAULT 0,
+    completed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
 
-  return {
-    total,
-    completed,
-    percentage,
-  };
-}
+  CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE (user_id, name)
+  );
 
-function enrichTodoWithSubtasks(todo: Todo, subtasks: Subtask[]): Todo {
-  const progress = calculateSubtaskProgress(subtasks);
+  CREATE TABLE IF NOT EXISTS todo_tags (
+    todo_id INTEGER NOT NULL,
+    tag_id INTEGER NOT NULL,
+    PRIMARY KEY (todo_id, tag_id),
+    FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE,
+    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+  );
 
-  return {
-    ...todo,
-    subtasks,
-    subtask_count_total: progress.total,
-    subtask_count_completed: progress.completed,
-    subtask_progress_percent: progress.percentage,
-  };
-}
+  CREATE TABLE IF NOT EXISTS subtasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    todo_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    category TEXT,
+    title_template TEXT NOT NULL,
+    priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high', 'medium', 'low')),
+    recurrence_enabled INTEGER NOT NULL DEFAULT 0 CHECK (recurrence_enabled IN (0, 1)),
+    recurrence_pattern TEXT CHECK (recurrence_pattern IN ('daily', 'weekly', 'monthly', 'yearly') OR recurrence_pattern IS NULL),
+    reminder_minutes INTEGER,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS holidays (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    year INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
+  CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
+  CREATE INDEX IF NOT EXISTS idx_tags_user_id ON tags(user_id);
+  CREATE INDEX IF NOT EXISTS idx_templates_user_id ON templates(user_id);
+  CREATE INDEX IF NOT EXISTS idx_subtasks_todo_id ON subtasks(todo_id);
+  CREATE INDEX IF NOT EXISTS idx_holidays_year ON holidays(year);
+`);
 
 try {
-  const dbPath = path.join(process.cwd(), 'todos.db');
-  db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+  db.exec("ALTER TABLE todos ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high', 'medium', 'low'))");
+} catch {
+  // Column already exists.
+}
+try {
+  db.exec('ALTER TABLE todos ADD COLUMN due_date TEXT');
+} catch {
+  // Column already exists.
+}
+try {
+  db.exec('ALTER TABLE todos ADD COLUMN reminder_minutes INTEGER');
+} catch {
+  // Column already exists.
+}
+try {
+  db.exec('ALTER TABLE todos ADD COLUMN last_notification_sent TEXT');
+} catch {
+  // Column already exists.
+}
+try {
+  db.exec("ALTER TABLE todos ADD COLUMN recurrence_enabled INTEGER NOT NULL DEFAULT 0 CHECK (recurrence_enabled IN (0, 1))");
+} catch {
+  // Column already exists.
+}
+try {
+  db.exec("ALTER TABLE todos ADD COLUMN recurrence_pattern TEXT CHECK (recurrence_pattern IN ('daily', 'weekly', 'monthly', 'yearly') OR recurrence_pattern IS NULL)");
+} catch {
+  // Column already exists.
+}
+try {
+  db.exec('ALTER TABLE todos ADD COLUMN completed INTEGER NOT NULL DEFAULT 0');
+} catch {
+  // Column already exists.
+}
+try {
+  db.exec('ALTER TABLE todos ADD COLUMN completed_at TEXT');
+} catch {
+  // Column already exists.
+}
+try {
+  db.exec('ALTER TABLE todos ADD COLUMN created_at TEXT');
+} catch {
+  // Column already exists.
+}
+try {
+  db.exec('ALTER TABLE todos ADD COLUMN updated_at TEXT');
+} catch {
+  // Column already exists.
+}
+try {
+  db.exec("ALTER TABLE subtasks ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
+} catch {
+  // Column already exists.
+}
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL
-    );
+const migrationTimestamp = getSingaporeNow().toISOString();
+db.prepare(`
+  UPDATE todos
+  SET created_at = COALESCE(created_at, ?),
+      updated_at = COALESCE(updated_at, created_at, ?),
+      completed = COALESCE(completed, 0),
+      recurrence_enabled = COALESCE(recurrence_enabled, 0)
+`).run(migrationTimestamp, migrationTimestamp);
 
-    CREATE TABLE IF NOT EXISTS todos (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      title TEXT NOT NULL,
-      priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high', 'medium', 'low')),
-      due_date TEXT,
-      reminder_minutes INTEGER,
-      last_notification_sent TEXT,
-      recurrence_enabled INTEGER NOT NULL DEFAULT 0 CHECK (recurrence_enabled IN (0, 1)),
-      recurrence_pattern TEXT CHECK (recurrence_pattern IN ('daily', 'weekly', 'monthly', 'yearly') OR recurrence_pattern IS NULL),
-      completed INTEGER NOT NULL DEFAULT 0,
-      completed_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
+db.prepare(`
+  UPDATE subtasks
+  SET updated_at = COALESCE(updated_at, created_at, ?)
+`).run(migrationTimestamp);
 
-    CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
-    CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
+const userSelectByUsername = db.prepare(
+  'SELECT id, username, created_at FROM users WHERE username = ?'
+);
+const userSelectById = db.prepare(
+  'SELECT id, username, created_at FROM users WHERE id = ?'
+);
+const userInsert = db.prepare(
+  'INSERT INTO users (username, created_at) VALUES (?, ?)'
+);
 
-    CREATE TABLE IF NOT EXISTS subtasks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      todo_id INTEGER NOT NULL,
-      title TEXT NOT NULL,
-      completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
-      position INTEGER NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
-    );
+const todoPriorityOrder = "CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END";
+const todoSelectAllByUser = db.prepare(`
+  SELECT id, user_id, title, priority, due_date, reminder_minutes, last_notification_sent, recurrence_enabled, recurrence_pattern, completed, completed_at, created_at, updated_at
+  FROM todos
+  WHERE user_id = ?
+  ORDER BY completed ASC, ${todoPriorityOrder},
+    CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,
+    due_date ASC,
+    created_at DESC
+`);
+const todoSelectByIdAndUser = db.prepare(`
+  SELECT id, user_id, title, priority, due_date, reminder_minutes, last_notification_sent, recurrence_enabled, recurrence_pattern, completed, completed_at, created_at, updated_at
+  FROM todos
+  WHERE id = ? AND user_id = ?
+`);
+const todoInsert = db.prepare(`
+  INSERT INTO todos (
+    user_id,
+    title,
+    priority,
+    due_date,
+    reminder_minutes,
+    last_notification_sent,
+    recurrence_enabled,
+    recurrence_pattern,
+    completed,
+    completed_at,
+    created_at,
+    updated_at
+  )
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+const todoUpdate = db.prepare(`
+  UPDATE todos
+  SET title = ?, priority = ?, due_date = ?, reminder_minutes = ?, last_notification_sent = ?, recurrence_enabled = ?, recurrence_pattern = ?, completed = ?, completed_at = ?, updated_at = ?
+  WHERE id = ? AND user_id = ?
+`);
+const todoDelete = db.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?');
+const todoSelectPendingRemindersByUser = db.prepare(`
+  SELECT id, user_id, title, priority, due_date, reminder_minutes, last_notification_sent, recurrence_enabled, recurrence_pattern, completed, completed_at, created_at, updated_at
+  FROM todos
+  WHERE user_id = ?
+    AND completed = 0
+    AND due_date IS NOT NULL
+    AND reminder_minutes IS NOT NULL
+    AND last_notification_sent IS NULL
+  ORDER BY due_date ASC
+`);
+const todoMarkReminderSent = db.prepare(`
+  UPDATE todos
+  SET last_notification_sent = ?, updated_at = ?
+  WHERE id = ? AND user_id = ? AND last_notification_sent IS NULL
+`);
 
-    CREATE INDEX IF NOT EXISTS idx_subtasks_todo_id ON subtasks(todo_id);
-    CREATE INDEX IF NOT EXISTS idx_subtasks_todo_position ON subtasks(todo_id, position);
-  `);
-
-  // Backfill recurrence columns for older databases created before recurrence support.
-  try {
-    db.exec("ALTER TABLE todos ADD COLUMN recurrence_enabled INTEGER NOT NULL DEFAULT 0 CHECK (recurrence_enabled IN (0, 1))");
-  } catch {
-    // Column already exists.
+function mapTodoRelations(userId: number, todos: Todo[]): TodoWithDetails[] {
+  if (todos.length === 0) {
+    return [];
   }
 
-  try {
-    db.exec("ALTER TABLE todos ADD COLUMN recurrence_pattern TEXT CHECK (recurrence_pattern IN ('daily', 'weekly', 'monthly', 'yearly') OR recurrence_pattern IS NULL)");
-  } catch {
-    // Column already exists.
+  const placeholders = todos.map(() => '?').join(', ');
+  const ids = todos.map((todo) => todo.id);
+
+  const tagRows = db.prepare(`
+    SELECT tt.todo_id, t.id, t.user_id, t.name, t.color, t.created_at
+    FROM todo_tags tt
+    INNER JOIN tags t ON t.id = tt.tag_id
+    WHERE t.user_id = ? AND tt.todo_id IN (${placeholders})
+    ORDER BY t.name ASC
+  `).all(userId, ...ids) as Array<Tag & { todo_id: number }>;
+
+  const subtaskRows = db.prepare(`
+    SELECT s.id, s.todo_id, s.title, s.completed, s.position, s.created_at
+    FROM subtasks s
+    INNER JOIN todos td ON td.id = s.todo_id
+    WHERE td.user_id = ? AND s.todo_id IN (${placeholders})
+    ORDER BY s.position ASC, s.created_at ASC
+  `).all(userId, ...ids) as Subtask[];
+
+  const tagsByTodo = new Map<number, Tag[]>();
+  for (const row of tagRows) {
+    const current = tagsByTodo.get(row.todo_id) ?? [];
+    tagsByTodo.set(row.todo_id, [
+      ...current,
+      {
+        id: row.id,
+        user_id: row.user_id,
+        name: row.name,
+        color: row.color,
+        created_at: row.created_at,
+      },
+    ]);
   }
 
-  userSelectByUsername = db.prepare('SELECT id, username, created_at FROM users WHERE username = ?');
-  userInsert = db.prepare('INSERT INTO users (username, created_at) VALUES (?, ?)');
-  userSelectById = db.prepare('SELECT id, username, created_at FROM users WHERE id = ?');
+  const subtasksByTodo = new Map<number, Subtask[]>();
+  for (const row of subtaskRows) {
+    const current = subtasksByTodo.get(row.todo_id) ?? [];
+    subtasksByTodo.set(row.todo_id, [...current, row]);
+  }
 
-  const todoPriorityOrder = "CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END";
+  return todos.map((todo) => ({
+    ...todo,
+    tags: tagsByTodo.get(todo.id) ?? [],
+    subtasks: subtasksByTodo.get(todo.id) ?? [],
+  }));
+}
 
-  todoSelectAllByUser = db.prepare(`
-    SELECT id, user_id, title, priority, due_date, reminder_minutes, last_notification_sent, recurrence_enabled, recurrence_pattern, completed, completed_at, created_at, updated_at
-    FROM todos
-    WHERE user_id = ?
-    ORDER BY completed ASC, ${todoPriorityOrder},
-      CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,
-      due_date ASC,
-      created_at DESC
-  `);
+const todoClaimPendingRemindersByUser = db.transaction((input: ClaimPendingRemindersInput): Todo[] => {
+  const candidates = todoSelectPendingRemindersByUser.all(input.userId) as Todo[];
 
-  todoSelectByIdAndUser = db.prepare(`
-    SELECT id, user_id, title, priority, due_date, reminder_minutes, last_notification_sent, recurrence_enabled, recurrence_pattern, completed, completed_at, created_at, updated_at
-    FROM todos
-    WHERE id = ? AND user_id = ?
-  `);
-
-  todoInsert = db.prepare(`
-    INSERT INTO todos (
-      user_id,
-      title,
-      priority,
-      due_date,
-      reminder_minutes,
-      last_notification_sent,
-      recurrence_enabled,
-      recurrence_pattern,
-      completed,
-      completed_at,
-      created_at,
-      updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  todoSelectPendingRemindersByUser = db.prepare(`
-    SELECT id, user_id, title, priority, due_date, reminder_minutes, last_notification_sent, recurrence_enabled, recurrence_pattern, completed, completed_at, created_at, updated_at
-    FROM todos
-    WHERE user_id = ?
-      AND completed = 0
-      AND due_date IS NOT NULL
-      AND reminder_minutes IS NOT NULL
-      AND last_notification_sent IS NULL
-    ORDER BY due_date ASC
-  `);
-
-  todoUpdate = db.prepare(`
-    UPDATE todos
-    SET title = ?, priority = ?, due_date = ?, reminder_minutes = ?, last_notification_sent = ?, recurrence_enabled = ?, recurrence_pattern = ?, completed = ?, completed_at = ?, updated_at = ?
-    WHERE id = ? AND user_id = ?
-  `);
-
-  todoMarkReminderSent = db.prepare(`
-    UPDATE todos
-    SET last_notification_sent = ?, updated_at = ?
-    WHERE id = ? AND user_id = ? AND last_notification_sent IS NULL
-  `);
-
-  todoClaimPendingRemindersByUser = db.transaction((input: ClaimPendingRemindersInput) => {
-    const candidates = todoSelectPendingRemindersByUser!.all(input.userId) as Todo[];
-
-    return candidates.flatMap((todo) => {
-      if (
-        !shouldSendReminder({
-          dueDate: todo.due_date,
-          reminderMinutes: todo.reminder_minutes ?? null,
-          lastNotificationSent: todo.last_notification_sent ?? null,
-          now: input.now,
-        })
-      ) {
-        return [];
-      }
-
-      const result = todoMarkReminderSent!.run(input.sentAt, input.sentAt, todo.id, input.userId);
-      if (result.changes === 0) {
-        return [];
-      }
-
-      return [
-        {
-          ...todo,
-          reminder_minutes: todo.reminder_minutes ?? null,
-          last_notification_sent: input.sentAt,
-          updated_at: input.sentAt,
-        },
-      ];
-    });
-  });
-
-  todoDelete = db.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?');
-
-  subtaskSelectByTodoAndUser = db.prepare(`
-    SELECT s.id, s.todo_id, s.title, s.completed, s.position, s.created_at, s.updated_at
-    FROM subtasks s
-    INNER JOIN todos t ON t.id = s.todo_id
-    WHERE s.todo_id = ? AND t.user_id = ?
-    ORDER BY s.position ASC, s.id ASC
-  `);
-
-  subtaskSelectByIdForTodoAndUser = db.prepare(`
-    SELECT s.id, s.todo_id, s.title, s.completed, s.position, s.created_at, s.updated_at
-    FROM subtasks s
-    INNER JOIN todos t ON t.id = s.todo_id
-    WHERE s.id = ? AND s.todo_id = ? AND t.user_id = ?
-  `);
-
-  subtaskSelectNextPositionByTodo = db.prepare(`
-    SELECT COALESCE(MAX(position), 0) + 1 AS next_position
-    FROM subtasks
-    WHERE todo_id = ?
-  `);
-
-  subtaskInsert = db.prepare(`
-    INSERT INTO subtasks (
-      todo_id,
-      title,
-      completed,
-      position,
-      created_at,
-      updated_at
-    )
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  subtaskUpdateCompleted = db.prepare(`
-    UPDATE subtasks
-    SET completed = ?, updated_at = ?
-    WHERE id = ? AND todo_id = ? AND todo_id IN (
-      SELECT id
-      FROM todos
-      WHERE id = ? AND user_id = ?
-    )
-  `);
-
-  subtaskDelete = db.prepare(`
-    DELETE FROM subtasks
-    WHERE id = ? AND todo_id = ? AND todo_id IN (
-      SELECT id
-      FROM todos
-      WHERE id = ? AND user_id = ?
-    )
-  `);
-
-  subtaskCreateTransactional = db.transaction((input: {
-    todoId: number;
-    userId: number;
-    title: string;
-    nowIso: string;
-  }) => {
-    const todo = todoSelectByIdAndUser!.get(input.todoId, input.userId) as Todo | undefined;
-    if (!todo) {
-      return null;
+  return candidates.flatMap((todo) => {
+    if (
+      !shouldSendReminder({
+        dueDate: todo.due_date,
+        reminderMinutes: todo.reminder_minutes ?? null,
+        lastNotificationSent: todo.last_notification_sent ?? null,
+        now: input.now,
+      })
+    ) {
+      return [];
     }
 
-    const nextPositionRow = subtaskSelectNextPositionByTodo!.get(input.todoId) as {
-      next_position: number;
-    };
+    const result = todoMarkReminderSent.run(input.sentAt, input.sentAt, todo.id, input.userId);
+    if (result.changes === 0) {
+      return [];
+    }
 
-    const info = subtaskInsert!.run(
-      input.todoId,
-      input.title,
-      0,
-      nextPositionRow.next_position,
-      input.nowIso,
-      input.nowIso,
-    );
-
-    const created = subtaskSelectByIdForTodoAndUser!.get(
-      Number(info.lastInsertRowid),
-      input.todoId,
-      input.userId,
-    ) as Subtask | undefined;
-
-    return created ?? null;
+    return [{
+      ...todo,
+      last_notification_sent: input.sentAt,
+      updated_at: input.sentAt,
+    }];
   });
-} catch (error) {
-  dbError = error instanceof Error ? error : new Error('Failed to initialize database');
-  db = null;
+});
+
+function sanitizeTagColor(color: string): string {
+  const normalized = color.trim().toLowerCase();
+  if (!/^#[0-9a-f]{6}$/.test(normalized)) {
+    throw new Error('Tag color must be a valid hex value like #0ea5e9');
+  }
+  return normalized;
 }
 
 export const userDB = {
   findByUsername(username: string): User | null {
-    if (!db) {
-      console.warn('[UserDB] Database unavailable, returning mock user for:', username);
-      return {
-        id: 1,
-        username,
-        created_at: getSingaporeNow().toISOString(),
-      };
-    }
-
-    const row = userSelectByUsername!.get(username) as User | undefined;
+    const row = userSelectByUsername.get(username) as User | undefined;
     return row ?? null;
   },
 
   findById(id: number): User | null {
-    if (!db) {
-      console.warn('[UserDB] Database unavailable, returning mock user for id:', id);
-      return {
-        id,
-        username: 'demo_user',
-        created_at: getSingaporeNow().toISOString(),
-      };
-    }
-
-    const row = userSelectById!.get(id) as User | undefined;
+    const row = userSelectById.get(id) as User | undefined;
     return row ?? null;
   },
 
   create(username: string): User {
-    if (!db) {
-      console.warn('[UserDB] Database unavailable, returning mock created user:', username);
-      return {
-        id: 1,
-        username,
-        created_at: getSingaporeNow().toISOString(),
-      };
-    }
-
     const createdAt = getSingaporeNow().toISOString();
-    const info = userInsert!.run(username, createdAt);
+    const info = userInsert.run(username, createdAt);
     const created = this.findById(Number(info.lastInsertRowid));
     if (!created) {
       throw new Error('Failed to create user');
     }
-
     return created;
   },
 };
 
-export const todoDB = {
-  listByUserId(userId: number): Todo[] {
-    if (!db) {
-      if (!mockTodosStore.has(userId)) {
-        mockTodosStore.set(userId, []);
-      }
-
-      console.warn('[TodoDB] Database unavailable, using mock storage for user:', userId);
-      const todos = mockTodosStore.get(userId) ?? [];
-      return todos.map((todo) => {
-        const subtasks = (mockSubtasksStore.get(todo.id) ?? []).slice().sort((a, b) => a.position - b.position || a.id - b.id);
-        return enrichTodoWithSubtasks(todo, subtasks);
-      });
-    }
-
-    const todos = todoSelectAllByUser!.all(userId) as Todo[];
-    return todos.map((todo) => {
-      const subtasks = subtaskSelectByTodoAndUser!.all(todo.id, userId) as Subtask[];
-      return enrichTodoWithSubtasks(todo, subtasks);
-    });
+export const tagDB = {
+  listByUserId(userId: number): Tag[] {
+    return db.prepare(
+      'SELECT id, user_id, name, color, created_at FROM tags WHERE user_id = ? ORDER BY name ASC'
+    ).all(userId) as Tag[];
   },
 
-  findByIdForUser(id: number, userId: number): Todo | null {
-    if (!db) {
-      const todos = mockTodosStore.get(userId) ?? [];
-      const todo = todos.find((item) => item.id === id);
-      if (!todo) {
-        return null;
+  findByIdForUser(id: number, userId: number): Tag | null {
+    const row = db.prepare(
+      'SELECT id, user_id, name, color, created_at FROM tags WHERE id = ? AND user_id = ?'
+    ).get(id, userId) as Tag | undefined;
+    return row ?? null;
+  },
+
+  create(input: { userId: number; name: string; color: string }): Tag {
+    const createdAt = getSingaporeNow().toISOString();
+    const info = db.prepare(
+      'INSERT INTO tags (user_id, name, color, created_at) VALUES (?, ?, ?, ?)'
+    ).run(input.userId, input.name.trim(), sanitizeTagColor(input.color), createdAt);
+    const created = this.findByIdForUser(Number(info.lastInsertRowid), input.userId);
+    if (!created) {
+      throw new Error('Failed to create tag');
+    }
+    return created;
+  },
+
+  update(input: { id: number; userId: number; name: string; color: string }): Tag | null {
+    const result = db.prepare(
+      'UPDATE tags SET name = ?, color = ? WHERE id = ? AND user_id = ?'
+    ).run(input.name.trim(), sanitizeTagColor(input.color), input.id, input.userId);
+    if (result.changes === 0) {
+      return null;
+    }
+    return this.findByIdForUser(input.id, input.userId);
+  },
+
+  delete(id: number, userId: number): boolean {
+    const result = db.prepare('DELETE FROM tags WHERE id = ? AND user_id = ?').run(id, userId);
+    return result.changes > 0;
+  },
+
+  setTagsForTodo(input: { todoId: number; userId: number; tagIds: number[] }): void {
+    const tx = db.transaction((payload: { todoId: number; userId: number; tagIds: number[] }) => {
+      const todoRow = db.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?').get(payload.todoId, payload.userId) as { id: number } | undefined;
+      if (!todoRow) {
+        return;
       }
 
-      const subtasks = (mockSubtasksStore.get(todo.id) ?? []).slice().sort((a, b) => a.position - b.position || a.id - b.id);
-      return enrichTodoWithSubtasks(todo, subtasks);
+      db.prepare(`
+        DELETE FROM todo_tags
+        WHERE todo_id = ?
+      `).run(payload.todoId);
+
+      if (payload.tagIds.length === 0) {
+        return;
+      }
+
+      const validTagRows = db.prepare(`
+        SELECT id FROM tags
+        WHERE user_id = ? AND id IN (${payload.tagIds.map(() => '?').join(', ')})
+      `).all(payload.userId, ...payload.tagIds) as Array<{ id: number }>;
+
+      const validIds = new Set(validTagRows.map((row) => row.id));
+      const insert = db.prepare('INSERT INTO todo_tags (todo_id, tag_id) VALUES (?, ?)');
+      for (const tagId of payload.tagIds) {
+        if (validIds.has(tagId)) {
+          insert.run(payload.todoId, tagId);
+        }
+      }
+    });
+
+    tx(input);
+  },
+};
+
+export const subtaskDB = {
+  listByTodoId(todoId: number, userId: number): Subtask[] {
+    return db.prepare(`
+      SELECT s.id, s.todo_id, s.title, s.completed, s.position, s.created_at
+      FROM subtasks s
+      INNER JOIN todos t ON t.id = s.todo_id
+      WHERE s.todo_id = ? AND t.user_id = ?
+      ORDER BY s.position ASC, s.created_at ASC
+    `).all(todoId, userId) as Subtask[];
+  },
+
+  create(input: { todoId: number; userId: number; title: string; position: number }): Subtask {
+    const todo = db.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?').get(input.todoId, input.userId);
+    if (!todo) {
+      throw new Error('Todo not found');
     }
 
-    const row = todoSelectByIdAndUser!.get(id, userId) as Todo | undefined;
-    if (!row) {
+    const createdAt = getSingaporeNow().toISOString();
+    const info = db.prepare(
+      'INSERT INTO subtasks (todo_id, title, completed, position, created_at, updated_at) VALUES (?, ?, 0, ?, ?, ?)'
+    ).run(input.todoId, input.title.trim(), input.position, createdAt, createdAt);
+
+    const created = db.prepare(
+      'SELECT id, todo_id, title, completed, position, created_at FROM subtasks WHERE id = ?'
+    ).get(Number(info.lastInsertRowid)) as Subtask | undefined;
+
+    if (!created) {
+      throw new Error('Failed to create subtask');
+    }
+
+    return created;
+  },
+
+  setCompleted(input: {
+    subtaskId: number;
+    todoId: number;
+    userId: number;
+    completed: boolean;
+  }): Subtask | null {
+    const todo = db.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?').get(input.todoId, input.userId);
+    if (!todo) {
       return null;
     }
 
-    const subtasks = subtaskSelectByTodoAndUser!.all(row.id, userId) as Subtask[];
-    return enrichTodoWithSubtasks(row, subtasks);
+    const result = db.prepare(
+      'UPDATE subtasks SET completed = ? WHERE id = ? AND todo_id = ?'
+    ).run(input.completed ? 1 : 0, input.subtaskId, input.todoId);
+
+    if (result.changes === 0) {
+      return null;
+    }
+
+    const updated = db.prepare(
+      'SELECT id, todo_id, title, completed, position, created_at FROM subtasks WHERE id = ?'
+    ).get(input.subtaskId) as Subtask | undefined;
+
+    return updated ?? null;
+  },
+
+  delete(input: {
+    subtaskId: number;
+    todoId: number;
+    userId: number;
+  }): boolean {
+    const todo = db.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?').get(input.todoId, input.userId);
+    if (!todo) {
+      return false;
+    }
+
+    const result = db.prepare('DELETE FROM subtasks WHERE id = ? AND todo_id = ?').run(input.subtaskId, input.todoId);
+    return result.changes > 0;
+  },
+};
+
+export const templateDB = {
+  listByUserId(userId: number): Template[] {
+    return db.prepare(`
+      SELECT id, user_id, name, description, category, title_template, priority, recurrence_enabled, recurrence_pattern, reminder_minutes, created_at
+      FROM templates
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+    `).all(userId) as Template[];
+  },
+
+  findByIdForUser(id: number, userId: number): Template | null {
+    const row = db.prepare(`
+      SELECT id, user_id, name, description, category, title_template, priority, recurrence_enabled, recurrence_pattern, reminder_minutes, created_at
+      FROM templates
+      WHERE id = ? AND user_id = ?
+    `).get(id, userId) as Template | undefined;
+    return row ?? null;
+  },
+
+  create(input: {
+    userId: number;
+    name: string;
+    description: string | null;
+    category: string | null;
+    titleTemplate: string;
+    priority: Priority;
+    recurrenceEnabled: boolean;
+    recurrencePattern: RecurrencePattern | null;
+    reminderMinutes: ReminderMinutes | null;
+  }): Template {
+    const createdAt = getSingaporeNow().toISOString();
+    const info = db.prepare(`
+      INSERT INTO templates (
+        user_id,
+        name,
+        description,
+        category,
+        title_template,
+        priority,
+        recurrence_enabled,
+        recurrence_pattern,
+        reminder_minutes,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.userId,
+      input.name.trim(),
+      input.description,
+      input.category,
+      input.titleTemplate,
+      input.priority,
+      input.recurrenceEnabled ? 1 : 0,
+      input.recurrenceEnabled ? input.recurrencePattern : null,
+      input.reminderMinutes,
+      createdAt,
+    );
+
+    const created = this.findByIdForUser(Number(info.lastInsertRowid), input.userId);
+    if (!created) {
+      throw new Error('Failed to create template');
+    }
+    return created;
+  },
+
+  delete(id: number, userId: number): boolean {
+    const result = db.prepare('DELETE FROM templates WHERE id = ? AND user_id = ?').run(id, userId);
+    return result.changes > 0;
+  },
+};
+
+export const holidayDB = {
+  upsertMany(holidays: Array<{ date: string; name: string; year: number }>): void {
+    const tx = db.transaction((records: Array<{ date: string; name: string; year: number }>) => {
+      const stmt = db.prepare('INSERT OR REPLACE INTO holidays (date, name, year) VALUES (?, ?, ?)');
+      for (const holiday of records) {
+        stmt.run(holiday.date, holiday.name, holiday.year);
+      }
+    });
+    tx(holidays);
+  },
+
+  listByMonth(year: number, month: number): Holiday[] {
+    const monthStr = String(month).padStart(2, '0');
+    return db.prepare(`
+      SELECT id, date, name, year
+      FROM holidays
+      WHERE year = ? AND strftime('%m', date) = ?
+      ORDER BY date ASC
+    `).all(year, monthStr) as Holiday[];
+  },
+};
+
+export const todoDB = {
+  listByUserId(userId: number): TodoWithDetails[] {
+    const rows = todoSelectAllByUser.all(userId) as Todo[];
+    return mapTodoRelations(userId, rows);
+  },
+
+  findByIdForUser(id: number, userId: number): TodoWithDetails | null {
+    const row = todoSelectByIdAndUser.get(id, userId) as Todo | undefined;
+    if (!row) {
+      return null;
+    }
+    return mapTodoRelations(userId, [row])[0] ?? null;
   },
 
   create(input: {
@@ -461,57 +673,45 @@ export const todoDB = {
     reminderMinutes: ReminderMinutes | null;
     recurrenceEnabled: boolean;
     recurrencePattern: RecurrencePattern | null;
-  }): Todo {
-    if (!db) {
-      const nowIso = getSingaporeNow().toISOString();
-      const todo: Todo = {
-        id: nextTodoId++,
-        user_id: input.userId,
-        title: input.title,
-        priority: input.priority,
-        due_date: input.dueDate,
-        reminder_minutes: input.reminderMinutes,
-        last_notification_sent: null,
-        recurrence_enabled: input.recurrenceEnabled ? 1 : 0,
-        recurrence_pattern: input.recurrenceEnabled ? input.recurrencePattern : null,
-        completed: 0,
-        completed_at: null,
-        created_at: nowIso,
-        updated_at: nowIso,
-      };
-      const todos = mockTodosStore.get(input.userId) ?? [];
-      mockTodosStore.set(input.userId, [...todos, todo]);
-      mockSubtasksStore.set(todo.id, []);
-      console.warn('[TodoDB] Database unavailable, created mock todo:', input.title);
-
-      const createdTodo = this.findByIdForUser(todo.id, input.userId);
-      if (!createdTodo) {
-        throw new Error('Failed to create todo');
-      }
-
-      return createdTodo;
-    }
-
+    tagIds?: number[];
+    completed?: boolean;
+    completedAt?: string | null;
+    createdAt?: string;
+    updatedAt?: string;
+    lastNotificationSent?: string | null;
+  }): TodoWithDetails {
     const nowIso = getSingaporeNow().toISOString();
-    const info = todoInsert!.run(
+    const createdAt = input.createdAt ?? nowIso;
+    const updatedAt = input.updatedAt ?? createdAt;
+    const completed = input.completed ?? false;
+    const info = todoInsert.run(
       input.userId,
       input.title,
       input.priority,
       input.dueDate,
       input.reminderMinutes,
-      null,
+      input.lastNotificationSent ?? null,
       input.recurrenceEnabled ? 1 : 0,
       input.recurrenceEnabled ? input.recurrencePattern : null,
-      0,
-      null,
-      nowIso,
-      nowIso,
+      completed ? 1 : 0,
+      completed ? input.completedAt ?? null : null,
+      createdAt,
+      updatedAt,
     );
-    const created = this.findByIdForUser(Number(info.lastInsertRowid), input.userId);
+
+    const todoId = Number(info.lastInsertRowid);
+    if (input.tagIds) {
+      tagDB.setTagsForTodo({
+        todoId,
+        userId: input.userId,
+        tagIds: input.tagIds,
+      });
+    }
+
+    const created = this.findByIdForUser(todoId, input.userId);
     if (!created) {
       throw new Error('Failed to create todo');
     }
-
     return created;
   },
 
@@ -527,38 +727,10 @@ export const todoDB = {
     recurrencePattern: RecurrencePattern | null;
     completed: boolean;
     completedAt: string | null;
-  }): Todo | null {
-    if (!db) {
-      const todos = mockTodosStore.get(input.userId) ?? [];
-      const todo = todos.find((item) => item.id === input.id);
-      if (!todo) {
-        return null;
-      }
-
-      const updatedTodo: Todo = {
-        ...todo,
-        title: input.title,
-        priority: input.priority,
-        due_date: input.dueDate,
-        reminder_minutes: input.reminderMinutes,
-        last_notification_sent: input.lastNotificationSent,
-        recurrence_enabled: input.recurrenceEnabled ? 1 : 0,
-        recurrence_pattern: input.recurrenceEnabled ? input.recurrencePattern : null,
-        completed: input.completed ? 1 : 0,
-        completed_at: input.completedAt,
-        updated_at: getSingaporeNow().toISOString(),
-      };
-
-      mockTodosStore.set(
-        input.userId,
-        todos.map((item) => (item.id === input.id ? updatedTodo : item)),
-      );
-      console.warn('[TodoDB] Database unavailable, updated mock todo:', input.id);
-      return this.findByIdForUser(input.id, input.userId);
-    }
-
+    tagIds?: number[];
+  }): TodoWithDetails | null {
     const updatedAt = getSingaporeNow().toISOString();
-    const result = todoUpdate!.run(
+    const result = todoUpdate.run(
       input.title,
       input.priority,
       input.dueDate,
@@ -577,257 +749,32 @@ export const todoDB = {
       return null;
     }
 
+    if (input.tagIds) {
+      tagDB.setTagsForTodo({
+        todoId: input.id,
+        userId: input.userId,
+        tagIds: input.tagIds,
+      });
+    }
+
     return this.findByIdForUser(input.id, input.userId);
   },
 
   listPendingRemindersByUser(userId: number): Todo[] {
-    if (!db) {
-      const now = getSingaporeNow();
-      const todos = mockTodosStore.get(userId) ?? [];
-      return todos.filter((todo) =>
-        shouldSendReminder({
-          dueDate: todo.due_date,
-          reminderMinutes: todo.reminder_minutes,
-          lastNotificationSent: todo.last_notification_sent,
-          now,
-        }),
-      );
-    }
-
-    return todoSelectPendingRemindersByUser!.all(userId) as Todo[];
+    return todoSelectPendingRemindersByUser.all(userId) as Todo[];
   },
 
   claimPendingRemindersByUser(input: ClaimPendingRemindersInput): Todo[] {
-    if (!db) {
-      const todos = mockTodosStore.get(input.userId) ?? [];
-      const claimedTodos = todos.flatMap((todo) => {
-        if (
-          !shouldSendReminder({
-            dueDate: todo.due_date,
-            reminderMinutes: todo.reminder_minutes,
-            lastNotificationSent: todo.last_notification_sent,
-            now: input.now,
-          })
-        ) {
-          return [];
-        }
-
-        return [
-          {
-            ...todo,
-            last_notification_sent: input.sentAt,
-            updated_at: input.sentAt,
-          },
-        ];
-      });
-
-      if (claimedTodos.length === 0) {
-        return [];
-      }
-
-      const claimedTodoMap = new Map(claimedTodos.map((todo) => [todo.id, todo]));
-      mockTodosStore.set(
-        input.userId,
-        todos.map((todo) => claimedTodoMap.get(todo.id) ?? todo),
-      );
-
-      return claimedTodos;
-    }
-
-    return todoClaimPendingRemindersByUser!(input);
+    return todoClaimPendingRemindersByUser(input);
   },
 
   markReminderSent(id: number, userId: number, sentAt: string): boolean {
-    if (!db) {
-      const todos = mockTodosStore.get(userId) ?? [];
-      const todo = todos.find((item) => item.id === id);
-      if (!todo || todo.last_notification_sent !== null) {
-        return false;
-      }
-
-      mockTodosStore.set(
-        userId,
-        todos.map((item) =>
-          item.id === id
-            ? {
-                ...item,
-                last_notification_sent: sentAt,
-                updated_at: sentAt,
-              }
-            : item,
-        ),
-      );
-      return true;
-    }
-
-    const result = todoMarkReminderSent!.run(sentAt, sentAt, id, userId);
+    const result = todoMarkReminderSent.run(sentAt, sentAt, id, userId);
     return result.changes > 0;
   },
 
   delete(id: number, userId: number): boolean {
-    if (!db) {
-      const todos = mockTodosStore.get(userId) ?? [];
-      const remainingTodos = todos.filter((todo) => todo.id !== id);
-      if (remainingTodos.length === todos.length) {
-        return false;
-      }
-
-      mockTodosStore.set(userId, remainingTodos);
-      mockSubtasksStore.delete(id);
-      console.warn('[TodoDB] Database unavailable, deleted mock todo:', id);
-      return true;
-    }
-
-    const result = todoDelete!.run(id, userId);
+    const result = todoDelete.run(id, userId);
     return result.changes > 0;
   },
 };
-
-export const subtaskDB = {
-  listByTodoForUser(todoId: number, userId: number): Subtask[] {
-    if (!db) {
-      const todos = mockTodosStore.get(userId) ?? [];
-      const todo = todos.find((item) => item.id === todoId);
-      if (!todo) {
-        return [];
-      }
-
-      return (mockSubtasksStore.get(todoId) ?? []).slice().sort((a, b) => a.position - b.position || a.id - b.id);
-    }
-
-    return subtaskSelectByTodoAndUser!.all(todoId, userId) as Subtask[];
-  },
-
-  create(input: {
-    todoId: number;
-    userId: number;
-    title: string;
-  }): Subtask | null {
-    const trimmedTitle = input.title.trim();
-    if (!trimmedTitle) {
-      throw new Error('Subtask title is required');
-    }
-
-    if (!db) {
-      const todos = mockTodosStore.get(input.userId) ?? [];
-      const todo = todos.find((item) => item.id === input.todoId);
-      if (!todo) {
-        return null;
-      }
-
-      const subtasks = mockSubtasksStore.get(input.todoId) ?? [];
-      const nextPosition = subtasks.length === 0 ? 1 : Math.max(...subtasks.map((subtask) => subtask.position)) + 1;
-      const nowIso = getSingaporeNow().toISOString();
-      const created: Subtask = {
-        id: nextSubtaskId++,
-        todo_id: input.todoId,
-        title: trimmedTitle,
-        completed: 0,
-        position: nextPosition,
-        created_at: nowIso,
-        updated_at: nowIso,
-      };
-
-      mockSubtasksStore.set(input.todoId, [...subtasks, created]);
-      return created;
-    }
-
-    return subtaskCreateTransactional!({
-      todoId: input.todoId,
-      userId: input.userId,
-      title: trimmedTitle,
-      nowIso: getSingaporeNow().toISOString(),
-    });
-  },
-
-  setCompleted(input: {
-    subtaskId: number;
-    todoId: number;
-    userId: number;
-    completed: boolean;
-  }): Subtask | null {
-    if (!db) {
-      const todos = mockTodosStore.get(input.userId) ?? [];
-      const todo = todos.find((item) => item.id === input.todoId);
-      if (!todo) {
-        return null;
-      }
-
-      const subtasks = mockSubtasksStore.get(input.todoId) ?? [];
-      const target = subtasks.find((subtask) => subtask.id === input.subtaskId);
-      if (!target) {
-        return null;
-      }
-
-      const nowIso = getSingaporeNow().toISOString();
-      const updated: Subtask = {
-        ...target,
-        completed: input.completed ? 1 : 0,
-        updated_at: nowIso,
-      };
-
-      mockSubtasksStore.set(
-        input.todoId,
-        subtasks.map((subtask) => (subtask.id === input.subtaskId ? updated : subtask)),
-      );
-
-      return updated;
-    }
-
-    const nowIso = getSingaporeNow().toISOString();
-    const result = subtaskUpdateCompleted!.run(
-      input.completed ? 1 : 0,
-      nowIso,
-      input.subtaskId,
-      input.todoId,
-      input.todoId,
-      input.userId,
-    );
-    if (result.changes === 0) {
-      return null;
-    }
-
-    const updated = subtaskSelectByIdForTodoAndUser!.get(
-      input.subtaskId,
-      input.todoId,
-      input.userId,
-    ) as Subtask | undefined;
-
-    return updated ?? null;
-  },
-
-  delete(input: {
-    subtaskId: number;
-    todoId: number;
-    userId: number;
-  }): boolean {
-    if (!db) {
-      const todos = mockTodosStore.get(input.userId) ?? [];
-      const todo = todos.find((item) => item.id === input.todoId);
-      if (!todo) {
-        return false;
-      }
-
-      const subtasks = mockSubtasksStore.get(input.todoId) ?? [];
-      const remainingSubtasks = subtasks.filter((subtask) => subtask.id !== input.subtaskId);
-      if (remainingSubtasks.length === subtasks.length) {
-        return false;
-      }
-
-      mockSubtasksStore.set(input.todoId, remainingSubtasks);
-      return true;
-    }
-
-    const result = subtaskDelete!.run(
-      input.subtaskId,
-      input.todoId,
-      input.todoId,
-      input.userId,
-    );
-    return result.changes > 0;
-  },
-};
-
-if (dbError) {
-  console.warn('[DB] Falling back to in-memory mock storage:', dbError.message);
-}

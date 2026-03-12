@@ -10,6 +10,7 @@ const updateTodoSchema = z.object({
   priority: z.enum(['high', 'medium', 'low']).optional(),
   due_date: z.string().datetime().nullable().optional(),
   reminder_minutes: reminderMinutesSchema.nullable().optional(),
+  tag_ids: z.array(z.number().int().positive()).optional(),
   recurrence_enabled: z.boolean().optional(),
   recurrence_pattern: z.enum(['daily', 'weekly', 'monthly', 'yearly']).nullable().optional(),
   completed: z.boolean().optional(),
@@ -233,6 +234,7 @@ export async function PUT(
       lastNotificationSent,
       completed,
       completedAt,
+      tagIds: parsed.data.tag_ids,
     });
 
     if (!updated) {
@@ -247,6 +249,7 @@ export async function PUT(
         priority: updated.priority as Priority,
         dueDate: nextDueDate,
         reminderMinutes: (updated.reminder_minutes ?? null) as ReminderMinutes | null,
+        tagIds: (updated.tags ?? []).map((tag) => tag.id),
         recurrenceEnabled: true,
         recurrencePattern,
       });
