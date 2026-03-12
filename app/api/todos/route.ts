@@ -68,11 +68,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Reminder requires a due date' }, { status: 400 });
     }
 
-    const dueDate = ensureFutureDueDate(parsed.data.due_date);
-    if (!dueDate && parsed.data.reminder_minutes !== null && parsed.data.reminder_minutes !== undefined) {
-      return NextResponse.json({ success: false, error: 'Reminder requires a due date' }, { status: 400 });
-    }
-
     const recurrenceEnabled = parsed.data.recurrence_enabled ?? false;
     const recurrencePattern: RecurrencePattern | null = recurrenceEnabled
       ? (parsed.data.recurrence_pattern ?? 'daily') as RecurrencePattern
