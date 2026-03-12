@@ -6,6 +6,7 @@ import { getReminderLabel, REMINDER_OPTIONS } from '@/lib/reminders';
 import { formatSingaporeDate, getSingaporeNow } from '@/lib/timezone';
 
 type Priority = 'high' | 'medium' | 'low';
+type RecurrencePattern = 'daily' | 'weekly' | 'monthly' | 'yearly';
 
 interface Todo {
   id: number;
@@ -14,6 +15,8 @@ interface Todo {
   due_date: string | null;
   reminder_minutes: number | null;
   completed: number;
+  recurrence_enabled?: number | boolean | null;
+  recurrence_pattern?: RecurrencePattern | null;
 }
 
 interface TodoApiResponse {
@@ -33,20 +36,32 @@ const sectionCardStyle: React.CSSProperties = {
 
 function priorityColor(priority: Priority): string {
   if (priority === 'high') return '#b91c1c';
-  if (priority === 'medium') return '#b45309';
+  if (priority === 'medium') return '#FFFF00';
   return '#1d4ed8';
+}
+
+function priorityTextColor(priority: Priority): string {
+  if (priority === 'medium') return '#000000';
+  return '#ffffff';
+}
+
+function isRecurringEnabled(todo: Todo): boolean {
+  return todo.recurrence_enabled === true || todo.recurrence_enabled === 1;
 }
 
 export default function HomePage() {
   const notificationState = useNotifications();
   const [todos, setTodos] = useState<Todo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [createError, setCreateError] = useState('');
+  const [editError, setEditError] = useState('');
 
   const [title, setTitle] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
   const [dueDate, setDueDate] = useState('');
   const [reminderMinutes, setReminderMinutes] = useState<number | null>(null);
+  const [repeatEnabled, setRepeatEnabled] = useState(false);
+  const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>('daily');
   const [saving, setSaving] = useState(false);
 
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -54,10 +69,12 @@ export default function HomePage() {
   const [editingPriority, setEditingPriority] = useState<Priority>('medium');
   const [editingDueDate, setEditingDueDate] = useState('');
   const [editingReminderMinutes, setEditingReminderMinutes] = useState<number | null>(null);
+  const [editingRepeatEnabled, setEditingRepeatEnabled] = useState(false);
+  const [editingRecurrencePattern, setEditingRecurrencePattern] = useState<RecurrencePattern>('daily');
 
   async function loadTodos() {
     setLoading(true);
-    setError('');
+    setCreateError('');
     try {
       const response = await fetch('/api/todos');
       if (!response.ok) {
@@ -71,7 +88,7 @@ export default function HomePage() {
       const data = (await response.json()) as TodoApiResponse;
       setTodos(data.data ?? []);
     } catch {
-      setError('Failed to load todos');
+      setCreateError('Failed to load todos');
     } finally {
       setLoading(false);
     }
@@ -128,10 +145,15 @@ export default function HomePage() {
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError('');
+    setCreateError('');
 
     if (!title.trim()) {
-      setError('Title is required');
+      setCreateError('Title is required');
+      return;
+    }
+
+    if (repeatEnabled && !dueDate) {
+      setCreateError('Recurring todos require a due date');
       return;
     }
 
@@ -145,12 +167,14 @@ export default function HomePage() {
           priority,
           due_date: validateDueDate(dueDate),
           reminder_minutes: dueDate ? reminderMinutes : null,
+          recurrence_enabled: repeatEnabled,
+          recurrence_pattern: repeatEnabled ? recurrencePattern : null,
         }),
       });
 
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setError(data.error ?? 'Unable to create todo');
+        setCreateError(data.error ?? 'Unable to create todo');
         return;
       }
 
@@ -158,26 +182,37 @@ export default function HomePage() {
       setPriority('medium');
       setDueDate('');
       setReminderMinutes(null);
+      setRepeatEnabled(false);
+      setRecurrencePattern('daily');
       await loadTodos();
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : 'Unable to create todo');
+      setCreateError(createError instanceof Error ? createError.message : 'Unable to create todo');
     } finally {
       setSaving(false);
     }
   }
 
   function startEditing(todo: Todo) {
+    setEditError('');
     setEditingId(todo.id);
     setEditingTitle(todo.title);
     setEditingPriority(todo.priority);
     setEditingDueDate(todo.due_date ? todo.due_date.slice(0, 16) : '');
     setEditingReminderMinutes(todo.reminder_minutes ?? null);
+    const todoRepeatEnabled = isRecurringEnabled(todo);
+    setEditingRepeatEnabled(todoRepeatEnabled);
+    setEditingRecurrencePattern(todo.recurrence_pattern ?? 'daily');
   }
 
   async function handleSaveEdit(todoId: number) {
-    setError('');
+    setEditError('');
     if (!editingTitle.trim()) {
-      setError('Title is required');
+      setEditError('Title is required');
+      return;
+    }
+
+    if (editingRepeatEnabled && !editingDueDate) {
+      setEditError('Recurring todos require a due date');
       return;
     }
 
@@ -191,24 +226,27 @@ export default function HomePage() {
           priority: editingPriority,
           due_date: dueDateIso,
           reminder_minutes: dueDateIso ? editingReminderMinutes : null,
+          recurrence_enabled: editingRepeatEnabled,
+          recurrence_pattern: editingRepeatEnabled ? editingRecurrencePattern : null,
         }),
       });
 
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setError(data.error ?? 'Unable to update todo');
+        setEditError(data.error ?? 'Unable to update todo');
         return;
       }
 
+      setEditError('');
       setEditingId(null);
       await loadTodos();
     } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : 'Unable to update todo');
+      setEditError(updateError instanceof Error ? updateError.message : 'Unable to update todo');
     }
   }
 
   async function toggleComplete(todo: Todo) {
-    setError('');
+    setCreateError('');
     try {
       const response = await fetch(`/api/todos/${todo.id}`, {
         method: 'PUT',
@@ -218,22 +256,22 @@ export default function HomePage() {
 
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
-        setError(data.error ?? 'Unable to update todo');
+        setCreateError(data.error ?? 'Unable to update todo');
         return;
       }
 
       await loadTodos();
     } catch {
-      setError('Unable to update todo');
+      setCreateError('Unable to update todo');
     }
   }
 
   async function deleteTodo(todoId: number) {
-    setError('');
+    setCreateError('');
     const response = await fetch(`/api/todos/${todoId}`, { method: 'DELETE' });
     const data = (await response.json()) as { error?: string };
     if (!response.ok) {
-      setError(data.error ?? 'Unable to delete todo');
+      setCreateError(data.error ?? 'Unable to delete todo');
       return;
     }
 
@@ -266,14 +304,20 @@ export default function HomePage() {
             <input
               aria-label="Edit title"
               value={editingTitle}
-              onChange={(event) => setEditingTitle(event.target.value)}
+              onChange={(event) => {
+                setEditError('');
+                setEditingTitle(event.target.value);
+              }}
               style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
             />
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               <select
                 aria-label="Edit priority"
                 value={editingPriority}
-                onChange={(event) => setEditingPriority(event.target.value as Priority)}
+                onChange={(event) => {
+                  setEditError('');
+                  setEditingPriority(event.target.value as Priority);
+                }}
                 style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
               >
                 <option value="high">High</option>
@@ -284,9 +328,49 @@ export default function HomePage() {
                 aria-label="Edit due date"
                 type="datetime-local"
                 value={editingDueDate}
-                onChange={(event) => handleEditingDueDateChange(event.target.value)}
+                onChange={(event) => {
+                  setEditError('');
+                  setEditingDueDate(event.target.value);
+                  handleEditingDueDateChange(event.target.value);
+                }}
                 style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
               />
+              <button
+                type="button"
+                onClick={() => {
+                  setEditError('');
+                  setEditingRepeatEnabled((prev) => !prev);
+                }}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  border: '1px solid #d1d5db',
+                  backgroundColor: editingRepeatEnabled ? '#dcfce7' : '#fff',
+                  color: '#111827',
+                }}
+              >
+                Repeat: {editingRepeatEnabled ? 'On' : 'Off'}
+              </button>
+              <select
+                aria-label="Edit recurrence pattern"
+                value={editingRecurrencePattern}
+                disabled={!editingRepeatEnabled}
+                onChange={(event) => {
+                  setEditError('');
+                  setEditingRecurrencePattern(event.target.value as RecurrencePattern);
+                }}
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: 8,
+                  border: '1px solid #d1d5db',
+                  backgroundColor: editingRepeatEnabled ? '#fff' : '#f3f4f6',
+                }}
+              >
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+              </select>
               <select
                 aria-label="Edit reminder"
                 value={editingReminderMinutes === null ? '' : String(editingReminderMinutes)}
@@ -316,7 +400,10 @@ export default function HomePage() {
               </button>
               <button
                 type="button"
-                onClick={() => setEditingId(null)}
+                onClick={() => {
+                  setEditError('');
+                  setEditingId(null);
+                }}
                 style={{
                   padding: '8px 12px',
                   border: '1px solid #d1d5db',
@@ -327,6 +414,7 @@ export default function HomePage() {
                 Cancel
               </button>
             </div>
+            {editError ? <p style={{ color: '#b91c1c', margin: 0 }}>{editError}</p> : null}
           </>
         ) : (
           <>
@@ -334,15 +422,17 @@ export default function HomePage() {
               const reminderLabel = getReminderLabel(todo.reminder_minutes);
 
               return (
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-              <div>
-                <strong style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}>{todo.title}</strong>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 0 }}>
+                <strong style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}>
+                  {todo.title}
+                </strong>
                 <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   <span
                     style={{
                       fontSize: 12,
                       fontWeight: 700,
-                      color: '#fff',
+                      color: priorityTextColor(todo.priority),
                       backgroundColor: priorityColor(todo.priority),
                       padding: '2px 8px',
                       borderRadius: 999,
@@ -351,6 +441,21 @@ export default function HomePage() {
                   >
                     {todo.priority}
                   </span>
+                  {isRecurringEnabled(todo) ? (
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: '#065f46',
+                        backgroundColor: '#d1fae5',
+                        padding: '2px 8px',
+                        borderRadius: 999,
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      Repeat {todo.recurrence_pattern ?? 'daily'}
+                    </span>
+                  ) : null}
                   {todo.due_date ? (
                     <span style={{ color: '#374151', fontSize: 13 }}>Due: {formatSingaporeDate(todo.due_date)}</span>
                   ) : (
@@ -376,13 +481,15 @@ export default function HomePage() {
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 <button
                   type="button"
+                  disabled={Boolean(todo.completed)}
                   onClick={() => void toggleComplete(todo)}
                   style={{
                     border: 'none',
                     borderRadius: 8,
                     padding: '6px 10px',
-                    backgroundColor: '#0369a1',
+                    backgroundColor: todo.completed ? '#94a3b8' : '#0369a1',
                     color: '#fff',
+                    cursor: todo.completed ? 'not-allowed' : 'pointer',
                   }}
                 >
                   {todo.completed ? 'Uncomplete' : 'Complete'}
@@ -519,7 +626,40 @@ export default function HomePage() {
               {saving ? 'Adding...' : 'Add'}
             </button>
           </div>
-          {error ? <p style={{ color: '#b91c1c', marginBottom: 0 }}>{error}</p> : null}
+          <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => setRepeatEnabled((prev) => !prev)}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 8,
+                border: '1px solid #d1d5db',
+                backgroundColor: repeatEnabled ? '#dcfce7' : '#fff',
+                color: '#111827',
+              }}
+            >
+              Repeat: {repeatEnabled ? 'On' : 'Off'}
+            </button>
+            <select
+              aria-label="Todo recurrence pattern"
+              value={recurrencePattern}
+              disabled={!repeatEnabled}
+              onChange={(event) => setRecurrencePattern(event.target.value as RecurrencePattern)}
+              style={{
+                padding: '8px 10px',
+                borderRadius: 8,
+                border: '1px solid #d1d5db',
+                backgroundColor: repeatEnabled ? '#fff' : '#f3f4f6',
+              }}
+            >
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+            {repeatEnabled ? <span style={{ color: '#065f46', fontSize: 13 }}>Recurring todos require a due date.</span> : null}
+          </div>
+          {createError ? <p style={{ color: '#b91c1c', marginBottom: 0 }}>{createError}</p> : null}
         </form>
 
         {loading ? <p>Loading todos...</p> : null}
@@ -537,8 +677,8 @@ export default function HomePage() {
           {active.length === 0 ? <p style={{ color: '#6b7280', marginBottom: 0 }}>No active todos.</p> : null}
         </section>
 
-        <section style={sectionCardStyle}>
-          <h2 style={{ marginTop: 0 }}>Completed ({completed.length})</h2>
+        <section style={{ ...sectionCardStyle, borderColor: '#86efac', backgroundColor: '#f0fdf4' }}>
+          <h2 style={{ marginTop: 0, color: '#15803d' }}>Completed ({completed.length})</h2>
           <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>{completed.map(renderTodoItem)}</ul>
           {completed.length === 0 ? <p style={{ color: '#6b7280', marginBottom: 0 }}>No completed todos.</p> : null}
         </section>
