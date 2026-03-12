@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
     // Verify the authentication response
     let verification;
     const expectedOrigin = process.env.WEBAUTHN_ORIGIN ?? `${request.nextUrl.protocol}//${request.nextUrl.host}`;
-    const expectedRPID = process.env.WEBAUTHN_RP_ID ?? 'localhost';
+    const expectedRPID = process.env.WEBAUTHN_RP_ID ?? request.nextUrl.hostname;
     console.log('[login-verify] expectedOrigin:', expectedOrigin, 'expectedRPID:', expectedRPID);
     console.log('[login-verify] challenge:', challenge);
     console.log('[login-verify] authenticator.counter:', authenticator.counter, 'public_key length:', authenticator.public_key?.length);

@@ -44,8 +44,9 @@ export async function POST(request: NextRequest) {
       return credential;
     });
 
+    const rpID = process.env.WEBAUTHN_RP_ID ?? request.nextUrl.hostname;
     const options = await generateAuthenticationOptions({
-      rpID: process.env.WEBAUTHN_RP_ID ?? 'localhost',
+      rpID,
       timeout: 60000,
       userVerification: 'preferred',
       allowCredentials,

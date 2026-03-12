@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
           clientExtensionResults: {},
         },
         expectedChallenge: challenge,
-        expectedRPID: process.env.WEBAUTHN_RP_ID ?? 'localhost',
+        expectedRPID: process.env.WEBAUTHN_RP_ID ?? request.nextUrl.hostname,
         expectedOrigin: process.env.WEBAUTHN_ORIGIN ?? `${request.nextUrl.protocol}//${request.nextUrl.host}`,
         requireUserVerification: false,
       };

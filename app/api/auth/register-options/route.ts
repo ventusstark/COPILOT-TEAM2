@@ -24,8 +24,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate registration options
+    const rpID = process.env.WEBAUTHN_RP_ID ?? request.nextUrl.hostname;
     const options = await generateRegistrationOptions({
-      rpID: process.env.WEBAUTHN_RP_ID ?? 'localhost',
+      rpID,
       rpName: 'Todo App',
       userName: username,
       userDisplayName: username,
