@@ -82,6 +82,7 @@ function toSingaporeDateTimeLocalValue(input: string | null): string {
 export default function HomePage() {
   const notificationState = useNotifications();
   const [todos, setTodos] = useState<Todo[]>([]);
+  const [now, setNow] = useState(() => getSingaporeNow());
   const [loading, setLoading] = useState(true);
   const [createError, setCreateError] = useState('');
   const [editError, setEditError] = useState('');
@@ -128,14 +129,23 @@ export default function HomePage() {
     void loadTodos();
   }, []);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNow(getSingaporeNow());
+    }, 15_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
   const { overdue, active, completed } = useMemo(() => {
-    const now = getSingaporeNow();
     return {
       overdue: todos.filter((todo) => !todo.completed && todo.due_date && new Date(todo.due_date).getTime() < now.getTime()),
       active: todos.filter((todo) => !todo.completed && (!todo.due_date || new Date(todo.due_date).getTime() >= now.getTime())),
       completed: todos.filter((todo) => Boolean(todo.completed)),
     };
-  }, [todos]);
+  }, [todos, now]);
 
   function validateDueDate(rawDueDate: string): string | null {
     if (!rawDueDate) {
