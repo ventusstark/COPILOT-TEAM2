@@ -108,6 +108,7 @@ export async function POST(request: NextRequest) {
         expectedChallenge: challenge,
         expectedRPID: process.env.WEBAUTHN_RP_ID ?? 'localhost',
         expectedOrigin: process.env.WEBAUTHN_ORIGIN ?? `${request.nextUrl.protocol}//${request.nextUrl.host}`,
+        requireUserVerification: false,
       };
 
       verification = await verifyRegistrationResponse(opts);
@@ -144,8 +145,8 @@ export async function POST(request: NextRequest) {
       authenticatorDB.create({
         userId: user.id,
         credentialId: id,
-        publicKey: Buffer.from(regInfo.credentialPublicKey),
-        counter: regInfo.counter ?? 0,
+        publicKey: Buffer.from(regInfo.credential.publicKey),
+        counter: regInfo.credential.counter ?? 0,
         transports: (transports as string[] | undefined) ?? undefined,
         aaguid: regInfo.aaguid ? isoBase64URL.fromBuffer(Buffer.from(regInfo.aaguid)) : undefined,
         backedUp: regInfo.credentialBackedUp,

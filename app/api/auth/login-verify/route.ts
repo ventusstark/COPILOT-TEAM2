@@ -131,12 +131,13 @@ export async function POST(request: NextRequest) {
         expectedChallenge: challenge,
         expectedRPID,
         expectedOrigin,
-        authenticator: {
-          credentialPublicKey: authenticator.public_key,
-          credentialID: authenticator.credential_id,
+        credential: {
+          id: authenticator.credential_id,
+          publicKey: authenticator.public_key,
           counter: authenticator.counter ?? 0,
           transports: authenticator.transports ?? undefined,
         },
+        requireUserVerification: false,
       };
 
       verification = await verifyAuthenticationResponse(opts);
@@ -157,10 +158,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Check counter for cloned authenticator detection
+    // Platform authenticators (Windows Hello, Touch ID) don't increment counter (stays 0)
+    // Only block if counter has actually regressed, indicating a replay attack
     const newCounter = verification.authenticationInfo?.newCounter ?? null;
     const oldCounter = authenticator.counter ?? 0;
 
-    if (newCounter !== null && newCounter <= oldCounter) {
+    if (newCounter !== null && newCounter > 0 && newCounter <= oldCounter) {
       console.warn(`Counter not incremented for authenticator ${id}. Possible clone detected.`);
       return NextResponse.json(
         { error: 'Authentication failed: security check' },
