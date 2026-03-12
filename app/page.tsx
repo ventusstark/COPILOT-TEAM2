@@ -77,6 +77,11 @@ const inputStyle: React.CSSProperties = {
   color: '#0f172a',
 };
 
+const dateTimeInputStyle: React.CSSProperties = {
+  ...inputStyle,
+  colorScheme: 'light',
+};
+
 const chipButtonStyle: React.CSSProperties = {
   border: '1px solid #cbd5e1',
   borderRadius: 999,
@@ -118,6 +123,36 @@ function priorityTextColor(priority: Priority): string {
   return priority === 'medium' ? '#111827' : '#ffffff';
 }
 
+function toSingaporeDateTimeLocalValue(input: string | null): string {
+  if (!input) {
+    return '';
+  }
+
+  const date = new Date(input);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Singapore',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+
+  const mapped = parts.reduce<Record<string, string>>((acc, part) => {
+    if (part.type !== 'literal') {
+      acc[part.type] = part.value;
+    }
+    return acc;
+  }, {});
+
+  return `${mapped.year}-${mapped.month}-${mapped.day}T${mapped.hour}:${mapped.minute}`;
+}
+
 export default function HomePage() {
   const notificationState = useNotifications();
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -125,6 +160,7 @@ export default function HomePage() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [currentTimeMs, setCurrentTimeMs] = useState(() => getSingaporeNow().getTime());
   const [loading, setLoading] = useState(true);
 
   const [message, setMessage] = useState('');
@@ -241,6 +277,16 @@ export default function HomePage() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [showTagModal, showTemplateModal]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setCurrentTimeMs(getSingaporeNow().getTime());
+    }, 15_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   function validateDueDate(rawDueDate: string): string | null {
     if (!rawDueDate) {
@@ -363,7 +409,7 @@ export default function HomePage() {
     setEditingId(todo.id);
     setEditingTitle(todo.title);
     setEditingPriority(todo.priority);
-    setEditingDueDate(todo.due_date ? todo.due_date.slice(0, 16) : '');
+    setEditingDueDate(toSingaporeDateTimeLocalValue(todo.due_date));
     setEditingReminderMinutes(todo.reminder_minutes ?? null);
     setEditingRepeatEnabled(isRecurringEnabled(todo));
     setEditingRecurrencePattern(todo.recurrence_pattern ?? 'daily');
@@ -663,14 +709,12 @@ export default function HomePage() {
   }, [todos, searchQuery, filterPriority, filterTagId, filterCompletion, filterDueFrom, filterDueTo]);
 
   const { overdue, active, completed } = useMemo(() => {
-    const now = getSingaporeNow().getTime();
-
     return {
-      overdue: filteredTodos.filter((todo) => !todo.completed && todo.due_date && new Date(todo.due_date).getTime() < now),
-      active: filteredTodos.filter((todo) => !todo.completed && (!todo.due_date || new Date(todo.due_date).getTime() >= now)),
+      overdue: filteredTodos.filter((todo) => !todo.completed && todo.due_date && new Date(todo.due_date).getTime() < currentTimeMs),
+      active: filteredTodos.filter((todo) => !todo.completed && (!todo.due_date || new Date(todo.due_date).getTime() >= currentTimeMs)),
       completed: filteredTodos.filter((todo) => Boolean(todo.completed)),
     };
-  }, [filteredTodos]);
+  }, [filteredTodos, currentTimeMs]);
 
   const totalTodos = filteredTodos.length;
 
@@ -726,7 +770,7 @@ export default function HomePage() {
                   }
                 }}
                 aria-label="Edit due date"
-                style={inputStyle}
+                style={dateTimeInputStyle}
               />
               <select
                 value={editingReminderMinutes === null ? '' : String(editingReminderMinutes)}
@@ -972,7 +1016,7 @@ export default function HomePage() {
                   }
                 }}
                 aria-label="Todo due date"
-                style={inputStyle}
+                style={dateTimeInputStyle}
               />
               <select
                 value={reminderMinutes === null ? '' : String(reminderMinutes)}
