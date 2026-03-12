@@ -208,10 +208,6 @@ export async function PUT(
         ? existing.completed_at
         : getSingaporeNow().toISOString()
       : null;
-    const dueDate =
-      parsed.data.due_date === undefined
-        ? existing.due_date
-        : ensureFutureDueDate(parsed.data.due_date);
     let reminderMinutes =
       parsed.data.reminder_minutes === undefined
         ? existing.reminder_minutes ?? null
