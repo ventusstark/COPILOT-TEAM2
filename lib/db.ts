@@ -12,6 +12,30 @@ export interface User {
   created_at: string;
 }
 
+export interface Authenticator {
+  id: number;
+  user_id: number;
+  credential_id: string; // Base64url-encoded
+  public_key: Buffer; // CBOR-encoded
+  counter: number;
+  transports: string[] | null; // Parsed from JSON
+  aaguid: string | null;
+  backed_up: number; // 0 or 1
+  backup_eligible: number; // 0 or 1
+  device_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebAuthnChallenge {
+  id: number;
+  challenge: string; // Base64url-encoded
+  user_id: number | null;
+  operation: 'registration' | 'login';
+  created_at: string;
+  expires_at: string;
+}
+
 export interface Tag {
   id: number;
   user_id: number;
@@ -89,6 +113,32 @@ db.exec(`
     created_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS authenticators (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    credential_id TEXT NOT NULL UNIQUE,
+    public_key BLOB NOT NULL,
+    counter INTEGER NOT NULL DEFAULT 0,
+    transports TEXT,
+    aaguid TEXT,
+    backed_up INTEGER NOT NULL DEFAULT 0,
+    backup_eligible INTEGER NOT NULL DEFAULT 0,
+    device_name TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS webauthn_challenges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    challenge TEXT NOT NULL UNIQUE,
+    user_id INTEGER,
+    operation TEXT NOT NULL CHECK (operation IN ('registration', 'login')),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS todos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -163,6 +213,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_templates_user_id ON templates(user_id);
   CREATE INDEX IF NOT EXISTS idx_subtasks_todo_id ON subtasks(todo_id);
   CREATE INDEX IF NOT EXISTS idx_holidays_year ON holidays(year);
+  CREATE INDEX IF NOT EXISTS idx_authenticators_user_id ON authenticators(user_id);
+  CREATE INDEX IF NOT EXISTS idx_authenticators_credential_id ON authenticators(credential_id);
+  CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_challenge ON webauthn_challenges(challenge);
+  CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_user_id_operation ON webauthn_challenges(user_id, operation);
+  CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expires_at ON webauthn_challenges(expires_at);
 `);
 
 try {
@@ -776,5 +831,188 @@ export const todoDB = {
   delete(id: number, userId: number): boolean {
     const result = todoDelete.run(id, userId);
     return result.changes > 0;
+  },
+};
+
+export const authenticatorDB = {
+  findByCredentialId(credentialId: string): Authenticator | null {
+    const row = db.prepare(`
+      SELECT id, user_id, credential_id, public_key, counter, transports, aaguid, 
+             backed_up, backup_eligible, device_name, created_at, updated_at
+      FROM authenticators
+      WHERE credential_id = ?
+    `).get(credentialId) as Record<string, unknown> | undefined;
+    
+    if (!row) return null;
+    
+    return {
+      id: row.id as number,
+      user_id: row.user_id as number,
+      credential_id: row.credential_id as string,
+      public_key: Buffer.from(row.public_key as Buffer | Uint8Array),
+      counter: (row.counter as number | null) ?? 0,
+      transports: row.transports ? JSON.parse(row.transports as string) : null,
+      aaguid: row.aaguid as string | null,
+      backed_up: row.backed_up as number,
+      backup_eligible: row.backup_eligible as number,
+      device_name: row.device_name as string | null,
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+    };
+  },
+
+  listByUserId(userId: number): Authenticator[] {
+    const rows = db.prepare(`
+      SELECT id, user_id, credential_id, public_key, counter, transports, aaguid,
+             backed_up, backup_eligible, device_name, created_at, updated_at
+      FROM authenticators
+      WHERE user_id = ?
+      ORDER BY created_at DESC
+    `).all(userId) as Array<Record<string, unknown>>;
+    
+    return rows.map(row => ({
+      id: row.id as number,
+      user_id: row.user_id as number,
+      credential_id: row.credential_id as string,
+      public_key: Buffer.from(row.public_key as Buffer | Uint8Array),
+      counter: (row.counter as number | null) ?? 0,
+      transports: row.transports ? JSON.parse(row.transports as string) : null,
+      aaguid: row.aaguid as string | null,
+      backed_up: row.backed_up as number,
+      backup_eligible: row.backup_eligible as number,
+      device_name: row.device_name as string | null,
+      created_at: row.created_at as string,
+      updated_at: row.updated_at as string,
+    }));
+  },
+
+  create(input: {
+    userId: number;
+    credentialId: string;
+    publicKey: Buffer;
+    counter: number;
+    transports?: string[];
+    aaguid?: string;
+    backedUp: boolean;
+    backupEligible: boolean;
+    deviceName?: string;
+  }): Authenticator {
+    const now = getSingaporeNow().toISOString();
+    const info = db.prepare(`
+      INSERT INTO authenticators (
+        user_id, credential_id, public_key, counter, transports, aaguid,
+        backed_up, backup_eligible, device_name, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.userId,
+      input.credentialId,
+      input.publicKey,
+      input.counter ?? 0,
+      input.transports ? JSON.stringify(input.transports) : null,
+      input.aaguid ?? null,
+      input.backedUp ? 1 : 0,
+      input.backupEligible ? 1 : 0,
+      input.deviceName ?? null,
+      now,
+      now
+    );
+
+    const created = this.findByCredentialId(input.credentialId);
+    if (!created) {
+      throw new Error('Failed to create authenticator');
+    }
+    return created;
+  },
+
+  updateCounter(credentialId: string, newCounter: number): Authenticator | null {
+    const now = getSingaporeNow().toISOString();
+    const result = db.prepare(`
+      UPDATE authenticators
+      SET counter = ?, updated_at = ?
+      WHERE credential_id = ?
+    `).run(newCounter, now, credentialId);
+
+    if (result.changes === 0) return null;
+    return this.findByCredentialId(credentialId);
+  },
+
+  delete(id: number, userId: number): boolean {
+    const result = db.prepare(`
+      DELETE FROM authenticators WHERE id = ? AND user_id = ?
+    `).run(id, userId);
+    return result.changes > 0;
+  },
+};
+
+export const challengeDB = {
+  findByChallenge(challenge: string): WebAuthnChallenge | null {
+    const row = db.prepare(`
+      SELECT id, challenge, user_id, operation, created_at, expires_at
+      FROM webauthn_challenges
+      WHERE challenge = ?
+    `).get(challenge) as Record<string, unknown> | undefined;
+    
+    if (!row) return null;
+    
+    return {
+      id: row.id as number,
+      challenge: row.challenge as string,
+      user_id: row.user_id as number | null,
+      operation: row.operation as 'registration' | 'login',
+      created_at: row.created_at as string,
+      expires_at: row.expires_at as string,
+    };
+  },
+
+  create(input: {
+    challenge: string;
+    userId?: number;
+    operation: 'registration' | 'login';
+    expiresIn: number; // Minutes
+  }): WebAuthnChallenge {
+    const now = getSingaporeNow();
+    const createdAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + input.expiresIn * 60 * 1000).toISOString();
+    
+    const info = db.prepare(`
+      INSERT INTO webauthn_challenges (challenge, user_id, operation, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      input.challenge,
+      input.userId ?? null,
+      input.operation,
+      createdAt,
+      expiresAt
+    );
+
+    const created = this.findByChallenge(input.challenge);
+    if (!created) {
+      throw new Error('Failed to create challenge');
+    }
+    return created;
+  },
+
+  consume(challenge: string): WebAuthnChallenge | null {
+    const found = this.findByChallenge(challenge);
+    if (!found) return null;
+    
+    if (new Date(found.expires_at) < getSingaporeNow()) {
+      // Challenge expired, delete it
+      db.prepare('DELETE FROM webauthn_challenges WHERE id = ?').run(found.id);
+      return null;
+    }
+
+    // Delete the challenge after consuming it
+    db.prepare('DELETE FROM webauthn_challenges WHERE id = ?').run(found.id);
+    return found;
+  },
+
+  cleanupExpired(): number {
+    const now = getSingaporeNow().toISOString();
+    const result = db.prepare(`
+      DELETE FROM webauthn_challenges
+      WHERE expires_at < ?
+    `).run(now);
+    return result.changes;
   },
 };
