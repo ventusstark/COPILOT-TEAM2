@@ -4,30 +4,52 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$requiredNodeVersion = "v22.22.1"
 
 Write-Host "== Node.js App Bootstrap ==" -ForegroundColor Cyan
 Write-Host "Working directory: $PWD"
 
-# 1) Verify Node.js + npm
-$nodeInstalled = $false
-try {
-  $nodeVersionRaw = (node -v).Trim()
-  $nodeInstalled = $true
-} catch {}
+# 1) Ensure fnm is installed and use required Node.js version
+$fnmInstalled = $false
+if (Get-Command fnm -ErrorAction SilentlyContinue) {
+  $fnmInstalled = $true
+}
 
-if (-not $nodeInstalled) {
-  Write-Host "Node.js not found. Trying to install Node.js LTS via winget..." -ForegroundColor Yellow
-  winget install OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements
-  Write-Host "Node.js installed. Please close and reopen PowerShell, then re-run this script." -ForegroundColor Yellow
+if (-not $fnmInstalled) {
+  Write-Host "fnm not found. Installing fnm via winget..." -ForegroundColor Yellow
+  winget install Schniz.fnm --silent --accept-package-agreements --accept-source-agreements
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "Failed to install fnm via winget." -ForegroundColor Red
+    exit 1
+  }
+  if (-not (Get-Command fnm -ErrorAction SilentlyContinue)) {
+    Write-Host "fnm installation complete, but this shell cannot see fnm yet. Please close and reopen PowerShell, then re-run this script." -ForegroundColor Yellow
+    exit 1
+  }
+}
+
+# Load fnm environment in this shell so fnm-managed node/npm become active.
+fnm env --shell powershell | Out-String | Invoke-Expression
+
+$installedVersions = (fnm list) -join "`n"
+if ($installedVersions -notmatch [regex]::Escape($requiredNodeVersion)) {
+  Write-Host "Installing Node.js $requiredNodeVersion via fnm..." -ForegroundColor Cyan
+  fnm install $requiredNodeVersion
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "Failed to install Node.js $requiredNodeVersion via fnm." -ForegroundColor Red
+    exit 1
+  }
+}
+
+fnm use $requiredNodeVersion | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "Failed to activate Node.js $requiredNodeVersion via fnm." -ForegroundColor Red
   exit 1
 }
 
-$nodeVersion = $nodeVersionRaw.TrimStart("v")
-$major = [int]($nodeVersion.Split(".")[0])
-if ($major -lt 20) {
-  Write-Host "Node.js 20+ required. Found $nodeVersionRaw. Upgrading via winget..." -ForegroundColor Yellow
-  winget upgrade OpenJS.NodeJS.LTS --silent --accept-package-agreements --accept-source-agreements
-  Write-Host "Node.js upgraded. Please close and reopen PowerShell, then re-run this script." -ForegroundColor Yellow
+$nodeVersionRaw = (node -v).Trim()
+if ($nodeVersionRaw -ne $requiredNodeVersion) {
+  Write-Host "Expected Node.js $requiredNodeVersion but found $nodeVersionRaw. Please verify fnm setup and rerun." -ForegroundColor Red
   exit 1
 }
 
@@ -41,10 +63,11 @@ npm install
 # 3) Optional env file creation
 if (-not (Test-Path ".env.local")) {
   Write-Host "No .env.local found. Creating a minimal local env file..." -ForegroundColor Yellow
+  $jwtSecret = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
   @"
 # Local development environment
 # Add/override variables here if your app needs them
-JWT_SECRET=local-dev-secret-change-me
+JWT_SECRET=$jwtSecret
 "@ | Out-File -FilePath ".env.local" -Encoding utf8
 }
 
@@ -52,12 +75,6 @@ JWT_SECRET=local-dev-secret-change-me
 if (Test-Path ".\scripts\seed-holidays.ts") {
   Write-Host "Found scripts/seed-holidays.ts, seeding data..." -ForegroundColor Cyan
   npx tsx scripts/seed-holidays.ts
-}
-
-# 5) Install Playwright browser only if Playwright config exists
-if (Test-Path ".\playwright.config.ts") {
-  Write-Host "Playwright config found. Installing Chromium (optional for E2E)..." -ForegroundColor Cyan
-  npx playwright install chromium
 }
 
 # 6) Port check
