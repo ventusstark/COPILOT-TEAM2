@@ -543,8 +543,15 @@ export default function HomePage() {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <button
               type="button"
-              onClick={() => void notificationState.requestPermission()}
-              disabled={!notificationState.supported || notificationState.permission === 'denied'}
+              onClick={() => {
+                if (notificationState.permission === 'granted') {
+                  notificationState.toggleEnabled();
+                  return;
+                }
+
+                void notificationState.requestPermission();
+              }}
+              disabled={!notificationState.resolved || !notificationState.supported || notificationState.permission === 'denied'}
               style={{
                 border: '1px solid #d1d5db',
                 background: notificationState.enabled ? '#0f766e' : '#fff',
@@ -553,8 +560,12 @@ export default function HomePage() {
                 padding: '8px 12px',
               }}
             >
-              {notificationState.permission === 'granted'
-                ? 'Notifications Enabled'
+              {!notificationState.resolved
+                ? 'Checking Notifications...'
+                : notificationState.permission === 'granted'
+                ? notificationState.enabled
+                  ? 'Notifications Enabled'
+                  : 'Notifications Paused'
                 : notificationState.permission === 'denied'
                   ? 'Notifications Blocked'
                   : notificationState.supported

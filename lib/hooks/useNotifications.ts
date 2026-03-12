@@ -27,14 +27,19 @@ function getInitialPermission(): NotificationState {
 }
 
 export function useNotifications() {
-  const [permission, setPermission] = useState<NotificationState>(getInitialPermission);
+  const [permission, setPermission] = useState<NotificationState>('default');
+  const [resolved, setResolved] = useState(false);
+  const [enabled, setEnabled] = useState(false);
 
   useEffect(() => {
-    setPermission(getInitialPermission());
+    const detectedPermission = getInitialPermission();
+    setPermission(detectedPermission);
+    setEnabled(detectedPermission === 'granted');
+    setResolved(true);
   }, []);
 
   useEffect(() => {
-    if (permission !== 'granted' || typeof window === 'undefined' || !('Notification' in window)) {
+    if (!enabled || permission !== 'granted' || typeof window === 'undefined' || !('Notification' in window)) {
       return;
     }
 
@@ -75,7 +80,7 @@ export function useNotifications() {
       active = false;
       window.clearInterval(intervalId);
     };
-  }, [permission]);
+  }, [enabled, permission]);
 
   async function requestPermission() {
     if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -85,13 +90,24 @@ export function useNotifications() {
 
     const nextPermission = await Notification.requestPermission();
     setPermission(nextPermission);
+    setEnabled(nextPermission === 'granted');
     return nextPermission;
   }
 
+  function toggleEnabled() {
+    if (permission !== 'granted') {
+      return;
+    }
+
+    setEnabled((previous) => !previous);
+  }
+
   return {
-    enabled: permission === 'granted',
+    enabled,
     permission,
+    resolved,
     requestPermission,
-    supported: permission !== 'unsupported',
+    toggleEnabled,
+    supported: resolved && permission !== 'unsupported',
   };
 }

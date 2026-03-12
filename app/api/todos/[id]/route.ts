@@ -246,6 +246,7 @@ export async function PUT(
         title: updated.title,
         priority: updated.priority as Priority,
         dueDate: nextDueDate,
+        reminderMinutes: (updated.reminder_minutes ?? null) as ReminderMinutes | null,
         recurrenceEnabled: true,
         recurrencePattern,
       });
