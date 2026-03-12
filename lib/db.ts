@@ -26,6 +26,20 @@ export interface Todo {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  subtasks?: Subtask[];
+  subtask_count_total?: number;
+  subtask_count_completed?: number;
+  subtask_progress_percent?: number;
+}
+
+export interface Subtask {
+  id: number;
+  todo_id: number;
+  title: string;
+  completed: number;
+  position: number;
+  created_at: string;
+  updated_at: string;
 }
 
 type PreparedStatement = Database.Statement<any[]>;
@@ -37,7 +51,9 @@ type ClaimPendingRemindersInput = {
 
 // In-memory storage for mock data when database is unavailable
 const mockTodosStore: Map<number, Todo[]> = new Map();
+const mockSubtasksStore: Map<number, Subtask[]> = new Map();
 let nextTodoId = 4;
+let nextSubtaskId = 1;
 
 // Initialize database with error handling
 let db: Database.Database | null = null;
@@ -55,11 +71,54 @@ let todoDelete: PreparedStatement | null = null;
 let todoClaimPendingRemindersByUser:
   | ((input: ClaimPendingRemindersInput) => Todo[])
   | null = null;
+let subtaskSelectByTodoAndUser: PreparedStatement | null = null;
+let subtaskSelectByIdForTodoAndUser: PreparedStatement | null = null;
+let subtaskSelectNextPositionByTodo: PreparedStatement | null = null;
+let subtaskInsert: PreparedStatement | null = null;
+let subtaskUpdateCompleted: PreparedStatement | null = null;
+let subtaskDelete: PreparedStatement | null = null;
+let subtaskCreateTransactional:
+  | ((input: {
+      todoId: number;
+      userId: number;
+      title: string;
+      nowIso: string;
+    }) => Subtask | null)
+  | null = null;
+
+function calculateSubtaskProgress(subtasks: Subtask[]): {
+  total: number;
+  completed: number;
+  percentage: number;
+} {
+  const total = subtasks.length;
+  const completed = subtasks.filter((subtask) => subtask.completed === 1).length;
+  const percentage = total === 0 ? 0 : Math.round((completed / total) * 100);
+
+  return {
+    total,
+    completed,
+    percentage,
+  };
+}
+
+function enrichTodoWithSubtasks(todo: Todo, subtasks: Subtask[]): Todo {
+  const progress = calculateSubtaskProgress(subtasks);
+
+  return {
+    ...todo,
+    subtasks,
+    subtask_count_total: progress.total,
+    subtask_count_completed: progress.completed,
+    subtask_progress_percent: progress.percentage,
+  };
+}
 
 try {
   const dbPath = path.join(process.cwd(), 'todos.db');
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -87,6 +146,20 @@ try {
 
     CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
     CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
+
+    CREATE TABLE IF NOT EXISTS subtasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      todo_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      completed INTEGER NOT NULL DEFAULT 0 CHECK (completed IN (0, 1)),
+      position INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_subtasks_todo_id ON subtasks(todo_id);
+    CREATE INDEX IF NOT EXISTS idx_subtasks_todo_position ON subtasks(todo_id, position);
   `);
 
   // Backfill recurrence columns for older databases created before recurrence support.
@@ -197,6 +270,91 @@ try {
   });
 
   todoDelete = db.prepare('DELETE FROM todos WHERE id = ? AND user_id = ?');
+
+  subtaskSelectByTodoAndUser = db.prepare(`
+    SELECT s.id, s.todo_id, s.title, s.completed, s.position, s.created_at, s.updated_at
+    FROM subtasks s
+    INNER JOIN todos t ON t.id = s.todo_id
+    WHERE s.todo_id = ? AND t.user_id = ?
+    ORDER BY s.position ASC, s.id ASC
+  `);
+
+  subtaskSelectByIdForTodoAndUser = db.prepare(`
+    SELECT s.id, s.todo_id, s.title, s.completed, s.position, s.created_at, s.updated_at
+    FROM subtasks s
+    INNER JOIN todos t ON t.id = s.todo_id
+    WHERE s.id = ? AND s.todo_id = ? AND t.user_id = ?
+  `);
+
+  subtaskSelectNextPositionByTodo = db.prepare(`
+    SELECT COALESCE(MAX(position), 0) + 1 AS next_position
+    FROM subtasks
+    WHERE todo_id = ?
+  `);
+
+  subtaskInsert = db.prepare(`
+    INSERT INTO subtasks (
+      todo_id,
+      title,
+      completed,
+      position,
+      created_at,
+      updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  subtaskUpdateCompleted = db.prepare(`
+    UPDATE subtasks
+    SET completed = ?, updated_at = ?
+    WHERE id = ? AND todo_id = ? AND todo_id IN (
+      SELECT id
+      FROM todos
+      WHERE id = ? AND user_id = ?
+    )
+  `);
+
+  subtaskDelete = db.prepare(`
+    DELETE FROM subtasks
+    WHERE id = ? AND todo_id = ? AND todo_id IN (
+      SELECT id
+      FROM todos
+      WHERE id = ? AND user_id = ?
+    )
+  `);
+
+  subtaskCreateTransactional = db.transaction((input: {
+    todoId: number;
+    userId: number;
+    title: string;
+    nowIso: string;
+  }) => {
+    const todo = todoSelectByIdAndUser!.get(input.todoId, input.userId) as Todo | undefined;
+    if (!todo) {
+      return null;
+    }
+
+    const nextPositionRow = subtaskSelectNextPositionByTodo!.get(input.todoId) as {
+      next_position: number;
+    };
+
+    const info = subtaskInsert!.run(
+      input.todoId,
+      input.title,
+      0,
+      nextPositionRow.next_position,
+      input.nowIso,
+      input.nowIso,
+    );
+
+    const created = subtaskSelectByIdForTodoAndUser!.get(
+      Number(info.lastInsertRowid),
+      input.todoId,
+      input.userId,
+    ) as Subtask | undefined;
+
+    return created ?? null;
+  });
 } catch (error) {
   dbError = error instanceof Error ? error : new Error('Failed to initialize database');
   db = null;
@@ -258,21 +416,41 @@ export const todoDB = {
       if (!mockTodosStore.has(userId)) {
         mockTodosStore.set(userId, []);
       }
+
       console.warn('[TodoDB] Database unavailable, using mock storage for user:', userId);
-      return mockTodosStore.get(userId) ?? [];
+      const todos = mockTodosStore.get(userId) ?? [];
+      return todos.map((todo) => {
+        const subtasks = (mockSubtasksStore.get(todo.id) ?? []).slice().sort((a, b) => a.position - b.position || a.id - b.id);
+        return enrichTodoWithSubtasks(todo, subtasks);
+      });
     }
 
-    return todoSelectAllByUser!.all(userId) as Todo[];
+    const todos = todoSelectAllByUser!.all(userId) as Todo[];
+    return todos.map((todo) => {
+      const subtasks = subtaskSelectByTodoAndUser!.all(todo.id, userId) as Subtask[];
+      return enrichTodoWithSubtasks(todo, subtasks);
+    });
   },
 
   findByIdForUser(id: number, userId: number): Todo | null {
     if (!db) {
       const todos = mockTodosStore.get(userId) ?? [];
-      return todos.find((todo) => todo.id === id) ?? null;
+      const todo = todos.find((item) => item.id === id);
+      if (!todo) {
+        return null;
+      }
+
+      const subtasks = (mockSubtasksStore.get(todo.id) ?? []).slice().sort((a, b) => a.position - b.position || a.id - b.id);
+      return enrichTodoWithSubtasks(todo, subtasks);
     }
 
     const row = todoSelectByIdAndUser!.get(id, userId) as Todo | undefined;
-    return row ?? null;
+    if (!row) {
+      return null;
+    }
+
+    const subtasks = subtaskSelectByTodoAndUser!.all(row.id, userId) as Subtask[];
+    return enrichTodoWithSubtasks(row, subtasks);
   },
 
   create(input: {
@@ -303,8 +481,15 @@ export const todoDB = {
       };
       const todos = mockTodosStore.get(input.userId) ?? [];
       mockTodosStore.set(input.userId, [...todos, todo]);
+      mockSubtasksStore.set(todo.id, []);
       console.warn('[TodoDB] Database unavailable, created mock todo:', input.title);
-      return todo;
+
+      const createdTodo = this.findByIdForUser(todo.id, input.userId);
+      if (!createdTodo) {
+        throw new Error('Failed to create todo');
+      }
+
+      return createdTodo;
     }
 
     const nowIso = getSingaporeNow().toISOString();
@@ -369,7 +554,7 @@ export const todoDB = {
         todos.map((item) => (item.id === input.id ? updatedTodo : item)),
       );
       console.warn('[TodoDB] Database unavailable, updated mock todo:', input.id);
-      return updatedTodo;
+      return this.findByIdForUser(input.id, input.userId);
     }
 
     const updatedAt = getSingaporeNow().toISOString();
@@ -488,11 +673,157 @@ export const todoDB = {
       }
 
       mockTodosStore.set(userId, remainingTodos);
+      mockSubtasksStore.delete(id);
       console.warn('[TodoDB] Database unavailable, deleted mock todo:', id);
       return true;
     }
 
     const result = todoDelete!.run(id, userId);
+    return result.changes > 0;
+  },
+};
+
+export const subtaskDB = {
+  listByTodoForUser(todoId: number, userId: number): Subtask[] {
+    if (!db) {
+      const todos = mockTodosStore.get(userId) ?? [];
+      const todo = todos.find((item) => item.id === todoId);
+      if (!todo) {
+        return [];
+      }
+
+      return (mockSubtasksStore.get(todoId) ?? []).slice().sort((a, b) => a.position - b.position || a.id - b.id);
+    }
+
+    return subtaskSelectByTodoAndUser!.all(todoId, userId) as Subtask[];
+  },
+
+  create(input: {
+    todoId: number;
+    userId: number;
+    title: string;
+  }): Subtask | null {
+    const trimmedTitle = input.title.trim();
+    if (!trimmedTitle) {
+      throw new Error('Subtask title is required');
+    }
+
+    if (!db) {
+      const todos = mockTodosStore.get(input.userId) ?? [];
+      const todo = todos.find((item) => item.id === input.todoId);
+      if (!todo) {
+        return null;
+      }
+
+      const subtasks = mockSubtasksStore.get(input.todoId) ?? [];
+      const nextPosition = subtasks.length === 0 ? 1 : Math.max(...subtasks.map((subtask) => subtask.position)) + 1;
+      const nowIso = getSingaporeNow().toISOString();
+      const created: Subtask = {
+        id: nextSubtaskId++,
+        todo_id: input.todoId,
+        title: trimmedTitle,
+        completed: 0,
+        position: nextPosition,
+        created_at: nowIso,
+        updated_at: nowIso,
+      };
+
+      mockSubtasksStore.set(input.todoId, [...subtasks, created]);
+      return created;
+    }
+
+    return subtaskCreateTransactional!({
+      todoId: input.todoId,
+      userId: input.userId,
+      title: trimmedTitle,
+      nowIso: getSingaporeNow().toISOString(),
+    });
+  },
+
+  setCompleted(input: {
+    subtaskId: number;
+    todoId: number;
+    userId: number;
+    completed: boolean;
+  }): Subtask | null {
+    if (!db) {
+      const todos = mockTodosStore.get(input.userId) ?? [];
+      const todo = todos.find((item) => item.id === input.todoId);
+      if (!todo) {
+        return null;
+      }
+
+      const subtasks = mockSubtasksStore.get(input.todoId) ?? [];
+      const target = subtasks.find((subtask) => subtask.id === input.subtaskId);
+      if (!target) {
+        return null;
+      }
+
+      const nowIso = getSingaporeNow().toISOString();
+      const updated: Subtask = {
+        ...target,
+        completed: input.completed ? 1 : 0,
+        updated_at: nowIso,
+      };
+
+      mockSubtasksStore.set(
+        input.todoId,
+        subtasks.map((subtask) => (subtask.id === input.subtaskId ? updated : subtask)),
+      );
+
+      return updated;
+    }
+
+    const nowIso = getSingaporeNow().toISOString();
+    const result = subtaskUpdateCompleted!.run(
+      input.completed ? 1 : 0,
+      nowIso,
+      input.subtaskId,
+      input.todoId,
+      input.todoId,
+      input.userId,
+    );
+    if (result.changes === 0) {
+      return null;
+    }
+
+    const updated = subtaskSelectByIdForTodoAndUser!.get(
+      input.subtaskId,
+      input.todoId,
+      input.userId,
+    ) as Subtask | undefined;
+
+    return updated ?? null;
+  },
+
+  delete(input: {
+    subtaskId: number;
+    todoId: number;
+    userId: number;
+  }): boolean {
+    if (!db) {
+      const todos = mockTodosStore.get(input.userId) ?? [];
+      const todo = todos.find((item) => item.id === input.todoId);
+      if (!todo) {
+        return false;
+      }
+
+      const subtasks = mockSubtasksStore.get(input.todoId) ?? [];
+      const remainingSubtasks = subtasks.filter((subtask) => subtask.id !== input.subtaskId);
+      if (remainingSubtasks.length === subtasks.length) {
+        return false;
+      }
+
+      mockSubtasksStore.set(input.todoId, remainingSubtasks);
+      return true;
+    }
+
+    const result = subtaskDelete!.run(
+      input.subtaskId,
+      input.todoId,
+      input.todoId,
+      input.userId,
+    );
     return result.changes > 0;
   },
 };

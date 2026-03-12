@@ -8,6 +8,14 @@ import { formatSingaporeDate, getSingaporeNow } from '@/lib/timezone';
 type Priority = 'high' | 'medium' | 'low';
 type RecurrencePattern = 'daily' | 'weekly' | 'monthly' | 'yearly';
 
+interface Subtask {
+  id: number;
+  todo_id: number;
+  title: string;
+  completed: number;
+  position: number;
+}
+
 interface Todo {
   id: number;
   title: string;
@@ -17,11 +25,21 @@ interface Todo {
   completed: number;
   recurrence_enabled?: number | boolean | null;
   recurrence_pattern?: RecurrencePattern | null;
+  subtasks?: Subtask[];
+  subtask_count_total?: number;
+  subtask_count_completed?: number;
+  subtask_progress_percent?: number;
 }
 
 interface TodoApiResponse {
   success: boolean;
   data?: Todo[];
+  error?: string;
+}
+
+interface TodoMutationResponse {
+  success: boolean;
+  data?: Todo;
   error?: string;
 }
 
@@ -102,6 +120,10 @@ export default function HomePage() {
   const [editingReminderMinutes, setEditingReminderMinutes] = useState<number | null>(null);
   const [editingRepeatEnabled, setEditingRepeatEnabled] = useState(false);
   const [editingRecurrencePattern, setEditingRecurrencePattern] = useState<RecurrencePattern>('daily');
+  const [expandedSubtasks, setExpandedSubtasks] = useState<Record<number, boolean>>({});
+  const [subtaskDrafts, setSubtaskDrafts] = useState<Record<number, string>>({});
+  const [subtaskErrors, setSubtaskErrors] = useState<Record<number, string>>({});
+  const [subtaskSaving, setSubtaskSaving] = useState<Record<number, boolean>>({});
 
   async function loadTodos() {
     setLoading(true);
@@ -167,6 +189,171 @@ export default function HomePage() {
     }
 
     return Number(value);
+  }
+
+  function getSubtaskStats(todo: Todo): {
+    total: number;
+    completedCount: number;
+    percentage: number;
+  } {
+    const subtasks = todo.subtasks ?? [];
+    const total = todo.subtask_count_total ?? subtasks.length;
+    const completedCount = todo.subtask_count_completed ?? subtasks.filter((subtask) => Boolean(subtask.completed)).length;
+    const percentage = total > 0
+      ? todo.subtask_progress_percent ?? Math.round((completedCount / total) * 100)
+      : 0;
+
+    return {
+      total,
+      completedCount,
+      percentage,
+    };
+  }
+
+  function replaceTodoInState(updatedTodo: Todo) {
+    setTodos((prevTodos) => prevTodos.map((todo) => (todo.id === updatedTodo.id ? updatedTodo : todo)));
+  }
+
+  function setSubtaskSavingFlag(todoId: number, value: boolean) {
+    setSubtaskSaving((prev) => ({
+      ...prev,
+      [todoId]: value,
+    }));
+  }
+
+  function toggleSubtasks(todoId: number) {
+    setExpandedSubtasks((prev) => ({
+      ...prev,
+      [todoId]: !prev[todoId],
+    }));
+  }
+
+  function updateSubtaskDraft(todoId: number, value: string) {
+    setSubtaskDrafts((prev) => ({
+      ...prev,
+      [todoId]: value,
+    }));
+
+    if (subtaskErrors[todoId]) {
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: '',
+      }));
+    }
+  }
+
+  async function addSubtask(todoId: number) {
+    const draftTitle = (subtaskDrafts[todoId] ?? '').trim();
+    if (!draftTitle) {
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: 'Subtask title is required',
+      }));
+      return;
+    }
+
+    setSubtaskSavingFlag(todoId, true);
+    try {
+      const response = await fetch(`/api/todos/${todoId}/subtasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: draftTitle }),
+      });
+
+      const data = (await response.json()) as TodoMutationResponse;
+      if (!response.ok || !data.data) {
+        setSubtaskErrors((prev) => ({
+          ...prev,
+          [todoId]: data.error ?? 'Unable to add subtask',
+        }));
+        return;
+      }
+
+      replaceTodoInState(data.data);
+      setSubtaskDrafts((prev) => ({
+        ...prev,
+        [todoId]: '',
+      }));
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: '',
+      }));
+      setExpandedSubtasks((prev) => ({
+        ...prev,
+        [todoId]: true,
+      }));
+    } catch {
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: 'Unable to add subtask',
+      }));
+    } finally {
+      setSubtaskSavingFlag(todoId, false);
+    }
+  }
+
+  async function toggleSubtaskComplete(todoId: number, subtask: Subtask) {
+    setSubtaskSavingFlag(todoId, true);
+    try {
+      const response = await fetch(`/api/todos/${todoId}/subtasks/${subtask.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completed: !Boolean(subtask.completed) }),
+      });
+
+      const data = (await response.json()) as TodoMutationResponse;
+      if (!response.ok || !data.data) {
+        setSubtaskErrors((prev) => ({
+          ...prev,
+          [todoId]: data.error ?? 'Unable to update subtask',
+        }));
+        return;
+      }
+
+      replaceTodoInState(data.data);
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: '',
+      }));
+    } catch {
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: 'Unable to update subtask',
+      }));
+    } finally {
+      setSubtaskSavingFlag(todoId, false);
+    }
+  }
+
+  async function deleteSubtask(todoId: number, subtaskId: number) {
+    setSubtaskSavingFlag(todoId, true);
+    try {
+      const response = await fetch(`/api/todos/${todoId}/subtasks/${subtaskId}`, {
+        method: 'DELETE',
+      });
+
+      const data = (await response.json()) as TodoMutationResponse;
+      if (!response.ok || !data.data) {
+        setSubtaskErrors((prev) => ({
+          ...prev,
+          [todoId]: data.error ?? 'Unable to delete subtask',
+        }));
+        return;
+      }
+
+      replaceTodoInState(data.data);
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: '',
+      }));
+    } catch {
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: 'Unable to delete subtask',
+      }));
+    } finally {
+      setSubtaskSavingFlag(todoId, false);
+    }
   }
 
   function handleDueDateChange(value: string) {
@@ -316,6 +503,22 @@ export default function HomePage() {
     }
 
     setTodos((prev) => prev.filter((todo) => todo.id !== todoId));
+    setExpandedSubtasks((prev) => {
+      const { [todoId]: _, ...rest } = prev;
+      return rest;
+    });
+    setSubtaskDrafts((prev) => {
+      const { [todoId]: _, ...rest } = prev;
+      return rest;
+    });
+    setSubtaskErrors((prev) => {
+      const { [todoId]: _, ...rest } = prev;
+      return rest;
+    });
+    setSubtaskSaving((prev) => {
+      const { [todoId]: _, ...rest } = prev;
+      return rest;
+    });
   }
 
   async function handleLogout() {
@@ -460,107 +663,282 @@ export default function HomePage() {
           <>
             {(() => {
               const reminderLabel = getReminderLabel(todo.reminder_minutes);
+              const stats = getSubtaskStats(todo);
+              const subtasks = (todo.subtasks ?? []).slice().sort((a, b) => a.position - b.position || a.id - b.id);
+              const isExpanded = Boolean(expandedSubtasks[todo.id]);
+              const isSubtaskBusy = Boolean(subtaskSaving[todo.id]);
+              const subtaskDraft = subtaskDrafts[todo.id] ?? '';
+              const subtaskError = subtaskErrors[todo.id] ?? '';
 
               return (
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              <div style={{ minWidth: 0 }}>
-                <strong style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}>
-                  {todo.title}
-                </strong>
-                <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 700,
-                      color: priorityTextColor(todo.priority),
-                      backgroundColor: priorityColor(todo.priority),
-                      padding: '2px 8px',
-                      borderRadius: 999,
-                      textTransform: 'uppercase',
-                    }}
-                  >
-                    {todo.priority}
-                  </span>
-                  {isRecurringEnabled(todo) ? (
-                    <span
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <strong style={{ textDecoration: todo.completed ? 'line-through' : 'none' }}>
+                        {todo.title}
+                      </strong>
+                      <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: priorityTextColor(todo.priority),
+                            backgroundColor: priorityColor(todo.priority),
+                            padding: '2px 8px',
+                            borderRadius: 999,
+                            textTransform: 'uppercase',
+                          }}
+                        >
+                          {todo.priority}
+                        </span>
+                        {isRecurringEnabled(todo) ? (
+                          <span
+                            style={{
+                              fontSize: 12,
+                              fontWeight: 700,
+                              color: '#065f46',
+                              backgroundColor: '#d1fae5',
+                              padding: '2px 8px',
+                              borderRadius: 999,
+                              textTransform: 'uppercase',
+                            }}
+                          >
+                            Repeat {todo.recurrence_pattern ?? 'daily'}
+                          </span>
+                        ) : null}
+                        {todo.due_date ? (
+                          <span style={{ color: '#374151', fontSize: 13 }}>Due: {formatSingaporeDate(todo.due_date)}</span>
+                        ) : (
+                          <span style={{ color: '#6b7280', fontSize: 13 }}>No due date</span>
+                        )}
+                        {reminderLabel ? (
+                          <span
+                            style={{
+                              color: '#0f766e',
+                              fontSize: 12,
+                              fontWeight: 700,
+                              border: '1px solid #99f6e4',
+                              backgroundColor: '#ecfeff',
+                              padding: '2px 8px',
+                              borderRadius: 999,
+                            }}
+                          >
+                            {reminderLabel}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        onClick={() => toggleSubtasks(todo.id)}
+                        style={{
+                          border: '1px solid #d1d5db',
+                          borderRadius: 8,
+                          padding: '6px 10px',
+                          backgroundColor: isExpanded ? '#dbeafe' : '#fff',
+                          color: '#1e3a8a',
+                        }}
+                      >
+                        {isExpanded ? 'Hide Subtasks' : 'Subtasks'}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={Boolean(todo.completed)}
+                        onClick={() => void toggleComplete(todo)}
+                        style={{
+                          border: 'none',
+                          borderRadius: 8,
+                          padding: '6px 10px',
+                          backgroundColor: todo.completed ? '#94a3b8' : '#0369a1',
+                          color: '#fff',
+                          cursor: todo.completed ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        {todo.completed ? 'Uncomplete' : 'Complete'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => startEditing(todo)}
+                        style={{
+                          border: '1px solid #d1d5db',
+                          borderRadius: 8,
+                          padding: '6px 10px',
+                          backgroundColor: '#fff',
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void deleteTodo(todo.id)}
+                        style={{
+                          border: 'none',
+                          borderRadius: 8,
+                          padding: '6px 10px',
+                          backgroundColor: '#b91c1c',
+                          color: '#fff',
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ color: '#334155', fontSize: 26, fontWeight: 600 }}>{stats.completedCount}/{stats.total} subtasks</span>
+                      <span style={{ color: '#0f766e', fontSize: 24, fontWeight: 700 }}>{stats.percentage}%</span>
+                    </div>
+                    <div
+                      role="progressbar"
+                      aria-label={`Subtask progress for ${todo.title}`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={stats.percentage}
                       style={{
-                        fontSize: 12,
-                        fontWeight: 700,
-                        color: '#065f46',
-                        backgroundColor: '#d1fae5',
-                        padding: '2px 8px',
+                        width: '100%',
+                        height: 8,
                         borderRadius: 999,
-                        textTransform: 'uppercase',
+                        overflow: 'hidden',
+                        backgroundColor: '#e2e8f0',
                       }}
                     >
-                      Repeat {todo.recurrence_pattern ?? 'daily'}
-                    </span>
-                  ) : null}
-                  {todo.due_date ? (
-                    <span style={{ color: '#374151', fontSize: 13 }}>Due: {formatSingaporeDate(todo.due_date)}</span>
-                  ) : (
-                    <span style={{ color: '#6b7280', fontSize: 13 }}>No due date</span>
-                  )}
-                  {reminderLabel ? (
-                    <span
+                      <div
+                        style={{
+                          width: `${stats.percentage}%`,
+                          height: '100%',
+                          backgroundColor: '#0f766e',
+                          transition: 'width 180ms ease',
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {isExpanded ? (
+                    <div
                       style={{
-                        color: '#0f766e',
-                        fontSize: 12,
-                        fontWeight: 700,
-                        border: '1px solid #99f6e4',
-                        backgroundColor: '#ecfeff',
-                        padding: '2px 8px',
-                        borderRadius: 999,
+                        marginTop: 10,
+                        padding: 10,
+                        borderRadius: 8,
+                        border: '1px solid #dbeafe',
+                        backgroundColor: '#f8fbff',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
                       }}
                     >
-                      {reminderLabel}
-                    </span>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <input
+                          aria-label="Subtask title"
+                          value={subtaskDraft}
+                          onChange={(event) => updateSubtaskDraft(todo.id, event.target.value)}
+                          placeholder="Add a subtask"
+                          style={{
+                            flex: '1 1 220px',
+                            padding: '8px 10px',
+                            borderRadius: 8,
+                            border: '1px solid #cbd5e1',
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void addSubtask(todo.id)}
+                          disabled={isSubtaskBusy}
+                          style={{
+                            border: 'none',
+                            borderRadius: 8,
+                            padding: '8px 12px',
+                            backgroundColor: '#0f766e',
+                            color: '#fff',
+                          }}
+                        >
+                          Add subtask
+                        </button>
+                      </div>
+
+                      {subtaskError ? <p style={{ color: '#b91c1c', margin: 0 }}>{subtaskError}</p> : null}
+
+                      {subtasks.length > 0 ? (
+                        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {subtasks.map((subtask) => (
+                            <li
+                              key={subtask.id}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 8,
+                                border: '1px solid #e2e8f0',
+                                borderRadius: 8,
+                                padding: '8px 10px',
+                                backgroundColor: '#fff',
+                              }}
+                            >
+                              <label style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                <input
+                                  type="checkbox"
+                                  aria-label={`Toggle subtask ${subtask.title}`}
+                                  checked={Boolean(subtask.completed)}
+                                  onChange={() => void toggleSubtaskComplete(todo.id, subtask)}
+                                  disabled={isSubtaskBusy}
+                                />
+                                <span
+                                  style={{
+                                    textDecoration: subtask.completed ? 'line-through' : 'none',
+                                    color: subtask.completed ? '#64748b' : '#111827',
+                                  }}
+                                >
+                                  {subtask.title}
+                                </span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={() => void deleteSubtask(todo.id, subtask.id)}
+                                disabled={isSubtaskBusy}
+                                aria-label={`Delete subtask ${subtask.title}`}
+                                title="Delete subtask"
+                                style={{
+                                  border: 'none',
+                                  borderRadius: 8,
+                                  width: 36,
+                                  height: 36,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  backgroundColor: '#dc2626',
+                                  color: '#fff',
+                                }}
+                              >
+                                <svg
+                                  xmlns="http://www.w3.org/2000/svg"
+                                  viewBox="0 0 24 24"
+                                  width="16"
+                                  height="16"
+                                  aria-hidden="true"
+                                  focusable="false"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path d="M3 6h18" />
+                                  <path d="M8 6V4h8v2" />
+                                  <path d="M19 6l-1 14H6L5 6" />
+                                  <path d="M10 11v6" />
+                                  <path d="M14 11v6" />
+                                </svg>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p style={{ margin: 0, color: '#64748b' }}>No subtasks yet.</p>
+                      )}
+                    </div>
                   ) : null}
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                <button
-                  type="button"
-                  disabled={Boolean(todo.completed)}
-                  onClick={() => void toggleComplete(todo)}
-                  style={{
-                    border: 'none',
-                    borderRadius: 8,
-                    padding: '6px 10px',
-                    backgroundColor: todo.completed ? '#94a3b8' : '#0369a1',
-                    color: '#fff',
-                    cursor: todo.completed ? 'not-allowed' : 'pointer',
-                  }}
-                >
-                  {todo.completed ? 'Uncomplete' : 'Complete'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => startEditing(todo)}
-                  style={{
-                    border: '1px solid #d1d5db',
-                    borderRadius: 8,
-                    padding: '6px 10px',
-                    backgroundColor: '#fff',
-                  }}
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void deleteTodo(todo.id)}
-                  style={{
-                    border: 'none',
-                    borderRadius: 8,
-                    padding: '6px 10px',
-                    backgroundColor: '#b91c1c',
-                    color: '#fff',
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
+                </>
               );
             })()}
           </>
