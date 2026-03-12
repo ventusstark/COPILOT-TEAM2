@@ -2,13 +2,29 @@
 
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { startAuthentication } from '@simplewebauthn/browser';
+import {
+  startRegistration,
+  browserSupportsWebAuthnAutofill,
+} from '@simplewebauthn/browser';
 
-export default function LoginPage() {
+export default function RegisterPage() {
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [supportsWebAuthn, setSupportsWebAuthn] = useState(true);
+
+  // Check browser support on mount
+  if (typeof window !== 'undefined' && !supportsWebAuthn) {
+    // This will run on the client
+    const checkSupport = async () => {
+      const supported = await browserSupportsWebAuthnAutofill();
+      setSupportsWebAuthn(supported);
+    };
+    checkSupport().catch(() => {
+      setSupportsWebAuthn(false);
+    });
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -23,8 +39,8 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // Step 1: Get login options from server
-      const optionsResponse = await fetch('/api/auth/login-options', {
+      // Step 1: Get registration options from server
+      const optionsResponse = await fetch('/api/auth/register-options', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: trimmedUsername }),
@@ -32,7 +48,7 @@ export default function LoginPage() {
 
       if (!optionsResponse.ok) {
         const data = (await optionsResponse.json()) as { error?: string };
-        setError(data.error ?? 'Failed to start login');
+        setError(data.error ?? 'Failed to start registration');
         setLoading(false);
         return;
       }
@@ -42,29 +58,29 @@ export default function LoginPage() {
       };
 
       // Step 2: Invoke the authenticator
-      let assertResp;
+      let attResp;
       try {
-        assertResp = await startAuthentication(options as any);
+        attResp = await startRegistration(options as any);
       } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : 'User cancelled authentication or authenticator not available';
+        const errorMsg = err instanceof Error ? err.message : 'User cancelled registration or authenticator not available';
         setError(errorMsg);
         setLoading(false);
         return;
       }
 
       // Step 3: Verify the response on the server
-      const verifyResponse = await fetch('/api/auth/login-verify', {
+      const verifyResponse = await fetch('/api/auth/register-verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: trimmedUsername,
-          response: assertResp,
+          response: attResp,
         }),
       });
 
       if (!verifyResponse.ok) {
         const data = (await verifyResponse.json()) as { error?: string };
-        setError(data.error ?? 'Login failed');
+        setError(data.error ?? 'Registration failed');
         setLoading(false);
         return;
       }
@@ -73,7 +89,7 @@ export default function LoginPage() {
       router.push('/');
       router.refresh();
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Login failed';
+      const errorMsg = err instanceof Error ? err.message : 'Registration failed';
       setError(errorMsg);
     } finally {
       setLoading(false);
@@ -106,12 +122,27 @@ export default function LoginPage() {
       >
         <div style={{ textAlign: 'center' }}>
           <h1 style={{ margin: '0 0 8px 0', fontSize: 28, color: '#e2e8f0' }}>
-            Login
+            Register
           </h1>
           <p style={{ margin: 0, fontSize: 14, color: '#94a3b8' }}>
-            Sign in with your passkey
+            Create an account with passkeys
           </p>
         </div>
+
+        {!supportsWebAuthn && (
+          <div
+            style={{
+              padding: 12,
+              borderRadius: 8,
+              background: 'rgba(239, 68, 68, 0.1)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              color: '#fca5a5',
+              fontSize: 13,
+            }}
+          >
+            Your browser does not support WebAuthn. Please use a modern browser like Chrome, Firefox, Edge, or Safari.
+          </div>
+        )}
 
         {error && (
           <div
@@ -138,7 +169,7 @@ export default function LoginPage() {
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter your username"
+              placeholder="Enter a username"
               disabled={loading}
               style={{
                 padding: '10px 12px',
@@ -161,7 +192,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !supportsWebAuthn}
             style={{
               padding: '10px 16px',
               borderRadius: 6,
@@ -175,24 +206,24 @@ export default function LoginPage() {
               opacity: loading ? 0.7 : 1,
             }}
             onMouseEnter={(e) => {
-              if (!loading) {
-                e.currentTarget.style.background = 'rgb(37, 99, 235)';
+              if (!loading && supportsWebAuthn) {
+                (e.currentTarget as HTMLButtonElement).style.background = 'rgb(37, 99, 235)';
               }
             }}
             onMouseLeave={(e) => {
-              if (!loading) {
-                e.currentTarget.style.background = 'rgb(59, 130, 246)';
+              if (!loading && supportsWebAuthn) {
+                (e.currentTarget as HTMLButtonElement).style.background = 'rgb(59, 130, 246)';
               }
             }}
           >
-            {loading ? 'Authenticating...' : 'Login with Passkey'}
+            {loading ? 'Registering...' : 'Register with Passkey'}
           </button>
         </form>
 
         <div style={{ textAlign: 'center', fontSize: 13, color: '#94a3b8' }}>
-          Don&apos;t have an account?{' '}
+          Already have an account?{' '}
           <a
-            href="/register"
+            href="/login"
             style={{
               color: 'rgb(59, 130, 246)',
               textDecoration: 'none',
@@ -206,7 +237,7 @@ export default function LoginPage() {
               e.currentTarget.style.textDecoration = 'none';
             }}
           >
-            Register
+            Log in
           </a>
         </div>
       </div>
