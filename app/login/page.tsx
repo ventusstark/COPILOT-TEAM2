@@ -1,16 +1,15 @@
 'use client';
 
 import { FormEvent, useState } from 'react';
-import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState<'register' | 'login' | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  async function handleRegister(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
     if (!username.trim()) {
@@ -18,40 +17,16 @@ export default function LoginPage() {
       return;
     }
 
-    setSubmitting('register');
+    setSubmitting(true);
     try {
-      const optionsResponse = await fetch('/api/auth/register-options', {
+      const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),
       });
 
-      const optionsBody = (await optionsResponse.json()) as {
-        success: boolean;
-        data?: unknown;
-        error?: string;
-      };
-
-      if (!optionsResponse.ok || !optionsBody.data) {
-        setError(optionsBody.error ?? 'Unable to start registration');
-        return;
-      }
-
-      const registrationResponse = await startRegistration({
-        optionsJSON: optionsBody.data as Parameters<typeof startRegistration>[0]['optionsJSON'],
-      });
-
-      const verifyResponse = await fetch('/api/auth/register-verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username,
-          response: registrationResponse,
-        }),
-      });
-
-      if (!verifyResponse.ok) {
-        const data = (await verifyResponse.json()) as { error?: string };
+      if (!response.ok) {
+        const data = (await response.json()) as { error?: string };
         setError(data.error ?? 'Login failed');
         return;
       }
@@ -59,63 +34,9 @@ export default function LoginPage() {
       router.push('/');
       router.refresh();
     } catch {
-      setError('Registration cancelled or failed');
+      setError('Login failed');
     } finally {
-      setSubmitting(null);
-    }
-  }
-
-  async function handleLogin() {
-    setError('');
-    if (!username.trim()) {
-      setError('Username is required');
-      return;
-    }
-
-    setSubmitting('login');
-    try {
-      const optionsResponse = await fetch('/api/auth/login-options', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username }),
-      });
-
-      const optionsBody = (await optionsResponse.json()) as {
-        success: boolean;
-        data?: unknown;
-        error?: string;
-      };
-
-      if (!optionsResponse.ok || !optionsBody.data) {
-        setError(optionsBody.error ?? 'Unable to start login');
-        return;
-      }
-
-      const authResponse = await startAuthentication({
-        optionsJSON: optionsBody.data as Parameters<typeof startAuthentication>[0]['optionsJSON'],
-      });
-
-      const verifyResponse = await fetch('/api/auth/login-verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username,
-          response: authResponse,
-        }),
-      });
-
-      if (!verifyResponse.ok) {
-        const data = (await verifyResponse.json()) as { error?: string };
-        setError(data.error ?? 'Login failed');
-        return;
-      }
-
-      router.push('/');
-      router.refresh();
-    } catch {
-      setError('Login cancelled or failed');
-    } finally {
-      setSubmitting(null);
+      setSubmitting(false);
     }
   }
 
@@ -130,7 +51,7 @@ export default function LoginPage() {
       }}
     >
       <form
-        onSubmit={handleRegister}
+        onSubmit={handleSubmit}
         style={{
           width: '100%',
           maxWidth: 420,
@@ -143,7 +64,7 @@ export default function LoginPage() {
       >
         <h1 style={{ margin: 0, marginBottom: 10, fontSize: 28, color: '#f9fafb' }}>Login</h1>
         <p style={{ marginTop: 0, marginBottom: 16, color: '#9ca3af' }}>
-          Register or log in with a passkey.
+          Enter your username to sign in or create an account.
         </p>
         <label htmlFor="username" style={{ display: 'block', marginBottom: 8, fontWeight: 600, color: '#e5e7eb' }}>
           Username
@@ -165,39 +86,21 @@ export default function LoginPage() {
           }}
         />
         {error ? <p style={{ color: '#b91c1c', marginTop: 0 }}>{error}</p> : null}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <button
-            type="submit"
-            disabled={submitting !== null}
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              borderRadius: 10,
-              border: 'none',
-              backgroundColor: '#0f766e',
-              color: '#ffffff',
-              cursor: submitting ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {submitting === 'register' ? 'Registering...' : 'Register'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleLogin()}
-            disabled={submitting !== null}
-            style={{
-              width: '100%',
-              padding: '10px 12px',
-              borderRadius: 10,
-              border: '1px solid #0f766e',
-              backgroundColor: '#0f172a',
-              color: '#5eead4',
-              cursor: submitting ? 'not-allowed' : 'pointer',
-            }}
-          >
-            {submitting === 'login' ? 'Signing in...' : 'Login'}
-          </button>
-        </div>
+        <button
+          type="submit"
+          disabled={submitting}
+          style={{
+            width: '100%',
+            padding: '10px 12px',
+            borderRadius: 10,
+            border: 'none',
+            backgroundColor: '#0f766e',
+            color: '#ffffff',
+            cursor: submitting ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {submitting ? 'Signing in...' : 'Sign In'}
+        </button>
       </form>
     </main>
   );

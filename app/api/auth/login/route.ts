@@ -8,10 +8,6 @@ const loginSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
-  if (process.env.NODE_ENV === 'production') {
-    return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 });
-  }
-
   try {
     const body = await request.json();
     const parsed = loginSchema.safeParse(body);

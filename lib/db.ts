@@ -50,16 +50,6 @@ export interface Holiday {
   year: number;
 }
 
-export interface Authenticator {
-  id: number;
-  user_id: number;
-  credential_id: string;
-  credential_public_key: string;
-  counter: number;
-  transports: string | null;
-  created_at: string;
-}
-
 export interface Todo {
   id: number;
   user_id: number;
@@ -166,24 +156,12 @@ db.exec(`
     year INTEGER NOT NULL
   );
 
-  CREATE TABLE IF NOT EXISTS authenticators (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    credential_id TEXT NOT NULL UNIQUE,
-    credential_public_key TEXT NOT NULL,
-    counter INTEGER NOT NULL DEFAULT 0,
-    transports TEXT,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-  );
-
   CREATE INDEX IF NOT EXISTS idx_todos_user_id ON todos(user_id);
   CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
   CREATE INDEX IF NOT EXISTS idx_tags_user_id ON tags(user_id);
   CREATE INDEX IF NOT EXISTS idx_templates_user_id ON templates(user_id);
   CREATE INDEX IF NOT EXISTS idx_subtasks_todo_id ON subtasks(todo_id);
   CREATE INDEX IF NOT EXISTS idx_holidays_year ON holidays(year);
-  CREATE INDEX IF NOT EXISTS idx_authenticators_user_id ON authenticators(user_id);
 `);
 
 try {
@@ -619,64 +597,6 @@ export const holidayDB = {
       WHERE year = ? AND strftime('%m', date) = ?
       ORDER BY date ASC
     `).all(year, monthStr) as Holiday[];
-  },
-};
-
-export const authenticatorDB = {
-  listByUserId(userId: number): Authenticator[] {
-    return db.prepare(`
-      SELECT id, user_id, credential_id, credential_public_key, counter, transports, created_at
-      FROM authenticators
-      WHERE user_id = ?
-      ORDER BY created_at ASC
-    `).all(userId) as Authenticator[];
-  },
-
-  findByCredentialId(credentialId: string): Authenticator | null {
-    const row = db.prepare(`
-      SELECT id, user_id, credential_id, credential_public_key, counter, transports, created_at
-      FROM authenticators
-      WHERE credential_id = ?
-    `).get(credentialId) as Authenticator | undefined;
-    return row ?? null;
-  },
-
-  create(input: {
-    userId: number;
-    credentialId: string;
-    credentialPublicKey: string;
-    counter: number;
-    transports: string[];
-  }): Authenticator {
-    const createdAt = getSingaporeNow().toISOString();
-    const info = db.prepare(`
-      INSERT INTO authenticators (user_id, credential_id, credential_public_key, counter, transports, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(
-      input.userId,
-      input.credentialId,
-      input.credentialPublicKey,
-      input.counter,
-      input.transports.length > 0 ? JSON.stringify(input.transports) : null,
-      createdAt,
-    );
-
-    const created = db.prepare(`
-      SELECT id, user_id, credential_id, credential_public_key, counter, transports, created_at
-      FROM authenticators
-      WHERE id = ?
-    `).get(Number(info.lastInsertRowid)) as Authenticator | undefined;
-
-    if (!created) {
-      throw new Error('Failed to create authenticator');
-    }
-
-    return created;
-  },
-
-  updateCounter(id: number, counter: number): boolean {
-    const result = db.prepare('UPDATE authenticators SET counter = ? WHERE id = ?').run(counter, id);
-    return result.changes > 0;
   },
 };
 
