@@ -49,6 +49,36 @@ function isRecurringEnabled(todo: Todo): boolean {
   return todo.recurrence_enabled === true || todo.recurrence_enabled === 1;
 }
 
+function toSingaporeDateTimeLocalValue(input: string | null): string {
+  if (!input) {
+    return '';
+  }
+
+  const date = new Date(input);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Singapore',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+
+  const mapped = parts.reduce<Record<string, string>>((acc, part) => {
+    if (part.type !== 'literal') {
+      acc[part.type] = part.value;
+    }
+    return acc;
+  }, {});
+
+  return `${mapped.year}-${mapped.month}-${mapped.day}T${mapped.hour}:${mapped.minute}`;
+}
+
 export default function HomePage() {
   const notificationState = useNotifications();
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -197,7 +227,7 @@ export default function HomePage() {
     setEditingId(todo.id);
     setEditingTitle(todo.title);
     setEditingPriority(todo.priority);
-    setEditingDueDate(todo.due_date ? todo.due_date.slice(0, 16) : '');
+    setEditingDueDate(toSingaporeDateTimeLocalValue(todo.due_date));
     setEditingReminderMinutes(todo.reminder_minutes ?? null);
     const todoRepeatEnabled = isRecurringEnabled(todo);
     setEditingRepeatEnabled(todoRepeatEnabled);
