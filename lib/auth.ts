@@ -1,8 +1,9 @@
 import { cookies } from 'next/headers';
 import type { NextRequest } from 'next/server';
+import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
 
-const SESSION_COOKIE_NAME = 'todo_session';
+export const SESSION_COOKIE_NAME = 'todo_session';
 const SESSION_EXPIRY_DAYS = 7;
 
 function getJwtSecret(): string {
@@ -50,9 +51,23 @@ export async function setSessionCookie(token: string): Promise<void> {
   });
 }
 
+export function setSessionCookieOnResponse(response: NextResponse, token: string): void {
+  response.cookies.set(SESSION_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    expires: getExpiryDate(),
+  });
+}
+
 export async function clearSessionCookie(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.delete(SESSION_COOKIE_NAME);
+}
+
+export function clearSessionCookieOnResponse(response: NextResponse): void {
+  response.cookies.delete(SESSION_COOKIE_NAME);
 }
 
 function parseSessionToken(token: string | undefined): Session | null {

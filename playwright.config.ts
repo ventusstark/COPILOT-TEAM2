@@ -7,6 +7,9 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:3000',
     timezoneId: 'Asia/Singapore',
     trace: 'on-first-retry',
+    launchOptions: {
+      args: ['--enable-features=WebAuthenticationVirtualAuthenticators'],
+    },
   },
   webServer: {
     command: 'npm run dev',

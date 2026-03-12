@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createSession, setSessionCookie } from '@/lib/auth';
+import { createSession, setSessionCookieOnResponse } from '@/lib/auth';
 import { userDB } from '@/lib/db';
 
 const loginSchema = z.object({
@@ -23,15 +23,16 @@ export async function POST(request: NextRequest) {
     const existing = userDB.findByUsername(username);
     const user = existing ?? userDB.create(username);
     const token = await createSession(user.id, user.username);
-    await setSessionCookie(token);
-
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       data: {
         userId: user.id,
         username: user.username,
       },
     });
+    setSessionCookieOnResponse(response, token);
+
+    return response;
   } catch {
     return NextResponse.json({ success: false, error: 'Login failed' }, { status: 500 });
   }
