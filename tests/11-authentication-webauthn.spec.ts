@@ -10,10 +10,10 @@ test.describe('Authentication and protection', () => {
     await expect(page).toHaveURL(/\/login/);
   });
 
-  test('login page exposes passkey actions', async ({ page }) => {
+  test('login page exposes username sign-in flow', async ({ page }) => {
     await page.goto('/login');
-    await expect(page.getByRole('button', { name: 'Register' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Login' })).toBeVisible();
+    await expect(page.getByLabel('Username')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
   });
 
   test('authenticated user can logout', async ({ page }) => {
