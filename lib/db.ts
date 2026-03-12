@@ -505,6 +505,46 @@ export const subtaskDB = {
 
     return created;
   },
+
+  setCompleted(input: {
+    subtaskId: number;
+    todoId: number;
+    userId: number;
+    completed: boolean;
+  }): Subtask | null {
+    const todo = db.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?').get(input.todoId, input.userId);
+    if (!todo) {
+      return null;
+    }
+
+    const result = db.prepare(
+      'UPDATE subtasks SET completed = ? WHERE id = ? AND todo_id = ?'
+    ).run(input.completed ? 1 : 0, input.subtaskId, input.todoId);
+
+    if (result.changes === 0) {
+      return null;
+    }
+
+    const updated = db.prepare(
+      'SELECT id, todo_id, title, completed, position, created_at FROM subtasks WHERE id = ?'
+    ).get(input.subtaskId) as Subtask | undefined;
+
+    return updated ?? null;
+  },
+
+  delete(input: {
+    subtaskId: number;
+    todoId: number;
+    userId: number;
+  }): boolean {
+    const todo = db.prepare('SELECT id FROM todos WHERE id = ? AND user_id = ?').get(input.todoId, input.userId);
+    if (!todo) {
+      return false;
+    }
+
+    const result = db.prepare('DELETE FROM subtasks WHERE id = ? AND todo_id = ?').run(input.subtaskId, input.todoId);
+    return result.changes > 0;
+  },
 };
 
 export const templateDB = {

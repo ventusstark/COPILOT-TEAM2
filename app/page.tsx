@@ -17,6 +17,8 @@ interface Tag {
 interface Subtask {
   id: number;
   title: string;
+  completed: number;
+  position: number;
 }
 
 interface Todo {
@@ -30,6 +32,9 @@ interface Todo {
   recurrence_pattern?: RecurrencePattern | null;
   tags?: Tag[];
   subtasks?: Subtask[];
+  subtask_count_total?: number;
+  subtask_count_completed?: number;
+  subtask_progress_percent?: number;
 }
 
 interface Template {
@@ -185,6 +190,11 @@ export default function HomePage() {
   const [editingRepeatEnabled, setEditingRepeatEnabled] = useState(false);
   const [editingRecurrencePattern, setEditingRecurrencePattern] = useState<RecurrencePattern>('daily');
   const [editingTagIds, setEditingTagIds] = useState<number[]>([]);
+
+  const [expandedSubtasks, setExpandedSubtasks] = useState<Record<number, boolean>>({});
+  const [subtaskDrafts, setSubtaskDrafts] = useState<Record<number, string>>({});
+  const [subtaskErrors, setSubtaskErrors] = useState<Record<number, string>>({});
+  const [subtaskSaving, setSubtaskSaving] = useState<Record<number, boolean>>({});
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterPriority, setFilterPriority] = useState('all');
@@ -350,6 +360,145 @@ export default function HomePage() {
     persistPresets(presets.filter((preset) => preset.name !== name));
   }
 
+  function getSubtaskStats(todo: Todo): { total: number; completedCount: number; percentage: number } {
+    const subtasks = todo.subtasks ?? [];
+    const total = todo.subtask_count_total ?? subtasks.length;
+    const completedCount =
+      todo.subtask_count_completed ?? subtasks.filter((subtask) => Boolean(subtask.completed)).length;
+    const percentage = total > 0
+      ? todo.subtask_progress_percent ?? Math.round((completedCount / total) * 100)
+      : 0;
+
+    return { total, completedCount, percentage };
+  }
+
+  function setSubtaskSavingFlag(todoId: number, savingFlag: boolean) {
+    setSubtaskSaving((prev) => ({
+      ...prev,
+      [todoId]: savingFlag,
+    }));
+  }
+
+  function toggleSubtasks(todoId: number) {
+    setExpandedSubtasks((prev) => ({
+      ...prev,
+      [todoId]: !prev[todoId],
+    }));
+  }
+
+  function updateSubtaskDraft(todoId: number, value: string) {
+    setSubtaskDrafts((prev) => ({
+      ...prev,
+      [todoId]: value,
+    }));
+
+    if (subtaskErrors[todoId]) {
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: '',
+      }));
+    }
+  }
+
+  async function addSubtask(todoId: number) {
+    const draftTitle = (subtaskDrafts[todoId] ?? '').trim();
+    if (!draftTitle) {
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: 'Subtask title is required',
+      }));
+      return;
+    }
+
+    setSubtaskSavingFlag(todoId, true);
+    try {
+      const response = await fetch(`/api/todos/${todoId}/subtasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: draftTitle }),
+      });
+
+      const data = (await response.json()) as { success?: boolean; data?: Todo; error?: string };
+      if (!response.ok || !data.success || !data.data) {
+        setSubtaskErrors((prev) => ({
+          ...prev,
+          [todoId]: data.error ?? 'Unable to add subtask',
+        }));
+        return;
+      }
+
+      setTodos((prev) => prev.map((todo) => (todo.id === todoId ? data.data! : todo)));
+      setSubtaskDrafts((prev) => ({ ...prev, [todoId]: '' }));
+      setSubtaskErrors((prev) => ({ ...prev, [todoId]: '' }));
+      setExpandedSubtasks((prev) => ({ ...prev, [todoId]: true }));
+    } catch {
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: 'Unable to add subtask',
+      }));
+    } finally {
+      setSubtaskSavingFlag(todoId, false);
+    }
+  }
+
+  async function toggleSubtaskComplete(todoId: number, subtask: Subtask) {
+    setSubtaskSavingFlag(todoId, true);
+    try {
+      const response = await fetch(`/api/todos/${todoId}/subtasks/${subtask.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ completed: !Boolean(subtask.completed) }),
+      });
+
+      const data = (await response.json()) as { success?: boolean; data?: Todo; error?: string };
+      if (!response.ok || !data.success || !data.data) {
+        setSubtaskErrors((prev) => ({
+          ...prev,
+          [todoId]: data.error ?? 'Unable to update subtask',
+        }));
+        return;
+      }
+
+      setTodos((prev) => prev.map((todo) => (todo.id === todoId ? data.data! : todo)));
+      setSubtaskErrors((prev) => ({ ...prev, [todoId]: '' }));
+    } catch {
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: 'Unable to update subtask',
+      }));
+    } finally {
+      setSubtaskSavingFlag(todoId, false);
+    }
+  }
+
+  async function deleteSubtask(todoId: number, subtaskId: number) {
+    setSubtaskSavingFlag(todoId, true);
+    try {
+      const response = await fetch(`/api/todos/${todoId}/subtasks/${subtaskId}`, {
+        method: 'DELETE',
+      });
+
+      const data = (await response.json()) as { success?: boolean; data?: Todo; error?: string };
+      if (!response.ok || !data.success || !data.data) {
+        setSubtaskErrors((prev) => ({
+          ...prev,
+          [todoId]: data.error ?? 'Unable to delete subtask',
+        }));
+        return;
+      }
+
+      setTodos((prev) => prev.map((todo) => (todo.id === todoId ? data.data! : todo)));
+      setSubtaskErrors((prev) => ({ ...prev, [todoId]: '' }));
+    } catch {
+      setSubtaskErrors((prev) => ({
+        ...prev,
+        [todoId]: 'Unable to delete subtask',
+      }));
+    } finally {
+      setSubtaskSavingFlag(todoId, false);
+    }
+  }
+
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setCreateError('');
@@ -490,6 +639,22 @@ export default function HomePage() {
       }
 
       setTodos((prev) => prev.filter((todo) => todo.id !== todoId));
+      setExpandedSubtasks((prev) => {
+        const { [todoId]: _, ...rest } = prev;
+        return rest;
+      });
+      setSubtaskDrafts((prev) => {
+        const { [todoId]: _, ...rest } = prev;
+        return rest;
+      });
+      setSubtaskErrors((prev) => {
+        const { [todoId]: _, ...rest } = prev;
+        return rest;
+      });
+      setSubtaskSaving((prev) => {
+        const { [todoId]: _, ...rest } = prev;
+        return rest;
+      });
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : 'Unable to delete todo');
     }
@@ -720,6 +885,12 @@ export default function HomePage() {
 
   function renderTodoItem(todo: Todo) {
     const isEditing = editingId === todo.id;
+    const stats = getSubtaskStats(todo);
+    const subtasks = (todo.subtasks ?? []).slice().sort((a, b) => a.position - b.position || a.id - b.id);
+    const isExpanded = Boolean(expandedSubtasks[todo.id]);
+    const isSubtaskBusy = Boolean(subtaskSaving[todo.id]);
+    const subtaskDraft = subtaskDrafts[todo.id] ?? '';
+    const subtaskError = subtaskErrors[todo.id] ?? '';
 
     return (
       <li
@@ -907,6 +1078,116 @@ export default function HomePage() {
                   Delete
                 </button>
               </div>
+            </div>
+
+            <div style={{ marginTop: 10, padding: 10, border: '1px solid #dbeafe', borderRadius: 10, backgroundColor: '#f8fafc' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span style={{ color: '#334155', fontSize: 13, fontWeight: 600 }}>{stats.completedCount}/{stats.total} subtasks</span>
+                <span style={{ color: '#0f766e', fontSize: 13, fontWeight: 700 }}>{stats.percentage}%</span>
+              </div>
+              <div
+                role="progressbar"
+                aria-label={`Subtask progress for ${todo.title}`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={stats.percentage}
+                style={{ height: 8, borderRadius: 999, backgroundColor: '#e2e8f0', overflow: 'hidden' }}
+              >
+                <div
+                  style={{
+                    width: `${stats.percentage}%`,
+                    height: '100%',
+                    backgroundColor: '#0f766e',
+                    transition: 'width 150ms ease-out',
+                  }}
+                />
+              </div>
+
+              <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <button type="button" onClick={() => toggleSubtasks(todo.id)} style={chipButtonStyle}>
+                  {isExpanded ? 'Hide Subtasks' : 'Subtasks'}
+                </button>
+              </div>
+
+              {isExpanded ? (
+                <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <input
+                      aria-label="Subtask title"
+                      value={subtaskDraft}
+                      onChange={(event) => updateSubtaskDraft(todo.id, event.target.value)}
+                      placeholder="Add a subtask"
+                      style={{ ...inputStyle, flex: '1 1 220px' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void addSubtask(todo.id)}
+                      disabled={isSubtaskBusy}
+                      style={primaryButtonStyle}
+                    >
+                      Add subtask
+                    </button>
+                  </div>
+
+                  {subtaskError ? <p style={{ color: '#b91c1c', margin: 0 }}>{subtaskError}</p> : null}
+
+                  {subtasks.length > 0 ? (
+                    <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {subtasks.map((subtask) => (
+                        <li
+                          key={subtask.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: 8,
+                            border: '1px solid #e2e8f0',
+                            borderRadius: 8,
+                            padding: '8px 10px',
+                            backgroundColor: '#ffffff',
+                          }}
+                        >
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                            <input
+                              type="checkbox"
+                              aria-label={`Toggle subtask ${subtask.title}`}
+                              checked={Boolean(subtask.completed)}
+                              onChange={() => void toggleSubtaskComplete(todo.id, subtask)}
+                              disabled={isSubtaskBusy}
+                            />
+                            <span
+                              style={{
+                                textDecoration: subtask.completed ? 'line-through' : 'none',
+                                color: subtask.completed ? '#64748b' : '#111827',
+                              }}
+                            >
+                              {subtask.title}
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => void deleteSubtask(todo.id, subtask.id)}
+                            disabled={isSubtaskBusy}
+                            aria-label={`Delete subtask ${subtask.title}`}
+                            title="Delete subtask"
+                            style={{
+                              border: 'none',
+                              background: 'transparent',
+                              color: '#b91c1c',
+                              cursor: 'pointer',
+                              fontWeight: 700,
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p style={{ margin: 0, color: '#64748b' }}>No subtasks yet.</p>
+                  )}
+                </div>
+              ) : null}
             </div>
           </>
         )}
