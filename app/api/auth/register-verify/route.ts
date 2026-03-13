@@ -6,6 +6,7 @@ import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import { NextRequest, NextResponse } from 'next/server';
 import { authenticatorDB, challengeDB, userDB } from '@/lib/db';
 import { createSession, setSessionCookieOnResponse } from '@/lib/auth';
+import { resolveRpID, resolveExpectedOrigin } from '@/lib/webauthn';
 
 export async function POST(request: NextRequest) {
   try {
@@ -106,8 +107,8 @@ export async function POST(request: NextRequest) {
           clientExtensionResults: {},
         },
         expectedChallenge: challenge,
-        expectedRPID: process.env.WEBAUTHN_RP_ID ?? request.nextUrl.hostname,
-        expectedOrigin: process.env.WEBAUTHN_ORIGIN ?? `${request.nextUrl.protocol}//${request.nextUrl.host}`,
+        expectedRPID: resolveRpID(request),
+        expectedOrigin: resolveExpectedOrigin(request),
         requireUserVerification: false,
       };
 

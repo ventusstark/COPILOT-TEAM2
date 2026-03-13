@@ -1,6 +1,7 @@
 import { generateRegistrationOptions } from '@simplewebauthn/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { challengeDB, userDB } from '@/lib/db';
+import { resolveRpID } from '@/lib/webauthn';
 
 export async function POST(request: NextRequest) {
   try {
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate registration options
-    const rpID = process.env.WEBAUTHN_RP_ID ?? request.nextUrl.hostname;
+    const rpID = resolveRpID(request);
     const options = await generateRegistrationOptions({
       rpID,
       rpName: 'Todo App',

@@ -1,6 +1,7 @@
 import { generateAuthenticationOptions } from '@simplewebauthn/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { userDB, challengeDB, authenticatorDB } from '@/lib/db';
+import { resolveRpID } from '@/lib/webauthn';
 
 export async function POST(request: NextRequest) {
   try {
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest) {
       return credential;
     });
 
-    const rpID = process.env.WEBAUTHN_RP_ID ?? request.nextUrl.hostname;
+    const rpID = resolveRpID(request);
     const options = await generateAuthenticationOptions({
       rpID,
       timeout: 60000,
